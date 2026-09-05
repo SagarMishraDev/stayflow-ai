@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Mehman AI"
+    app_name: str = "StayFlow AI"
     app_version: str = "0.1.0"
     environment: str = "development"
     debug: bool = False

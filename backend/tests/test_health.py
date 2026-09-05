@@ -13,5 +13,5 @@ def test_health_check() -> None:
     data = response.json()
 
     assert data["status"] == "ok"
-    assert data["service"] == "Mehman AI"
+    assert data["service"] == "StayFlow AI"
     assert data["version"] == "0.1.0"
