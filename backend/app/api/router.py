@@ -40,8 +40,6 @@ def database_check(db: Session = Depends(get_db, scope="function")) -> dict[str,
 def get_hotels(
     db: Session = Depends(get_db, scope="function"),
 ) -> list[HotelResponse]:
-    hotels = db.scalars(
-        select(Hotel)
-    ).all()
+    hotels = db.scalars(select(Hotel)).all()
 
     return hotels

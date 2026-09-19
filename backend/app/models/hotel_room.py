@@ -29,4 +29,3 @@ class HotelRoom(Base):
         nullable=False,
         default=True,
     )
-    

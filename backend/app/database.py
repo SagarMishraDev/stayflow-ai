@@ -8,6 +8,7 @@ engine = create_engine(
     settings.database_url,
 )
 
+
 def test_connection() -> None:
     with engine.connect() as _connection:
         print("Database connection successful!")

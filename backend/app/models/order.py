@@ -26,7 +26,7 @@ class Order(Base):
         ForeignKey("hotel_rooms.id"),
         nullable=True,
     )
-    
+
     order_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
