@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-
 client = TestClient(app)
 
 
@@ -625,9 +624,7 @@ def test_menu_order_and_order_item_workflows():
 
     assert float(item_data["unit_price"]) == 449
     assert float(item_data["subtotal"]) == 898
-    assert float(
-        client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]
-    ) == 898
+    assert float(client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]) == 898
 
     assert_status(client.get("/api/v1/order-items"), 200)
     assert_status(client.get(f"/api/v1/order-items/{item_id}"), 200)
@@ -639,9 +636,7 @@ def test_menu_order_and_order_item_workflows():
     assert_status(response, 200)
     assert float(response.json()["subtotal"]) == 1347
 
-    assert float(
-        client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]
-    ) == 1347
+    assert float(client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]) == 1347
 
     assert_status(
         client.patch(
@@ -652,9 +647,7 @@ def test_menu_order_and_order_item_workflows():
     )
 
     assert_status(client.delete(f"/api/v1/order-items/{item_id}"), 204)
-    assert float(
-        client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]
-    ) == 0
+    assert float(client.get(f"/api/v1/orders/{order_id}").json()["total_amount"]) == 0
 
     assert_status(client.delete(f"/api/v1/orders/{order_id}"), 204)
     assert_status(client.get(f"/api/v1/orders/{order_id}"), 404)
