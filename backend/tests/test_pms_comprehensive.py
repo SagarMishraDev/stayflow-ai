@@ -471,6 +471,41 @@ def test_guest_and_booking_workflows_and_validation():
     check_in = date.today() + timedelta(days=40)
     check_out = check_in + timedelta(days=2)
 
+    # Create a rate for every requested night.
+    booking_rates = [
+        (check_in, 3500),
+        (check_in + timedelta(days=1), 3600),
+    ]
+
+    for rate_date, price in booking_rates:
+        response = client.post(
+            "/api/v1/rates",
+            json={
+                "room_id": rid,
+                "date": str(rate_date),
+                "price": price,
+                "currency": "INR",
+                "is_active": True,
+            },
+        )
+        assert_status(response, 201)
+
+    for availability_date in (
+        check_in,
+        check_in + timedelta(days=1),
+    ):
+        response = client.post(
+            "/api/v1/availability",
+            json={
+                "room_id": rid,
+                "date": str(availability_date),
+                "available_rooms": 2,
+                "is_active": True,
+            },
+        )
+        assert_status(response, 201)
+
+    # The backend calculates final_price from the Rate table.
     booking = client.post(
         "/api/v1/bookings",
         json={
@@ -480,12 +515,16 @@ def test_guest_and_booking_workflows_and_validation():
             "check_in": str(check_in),
             "check_out": str(check_out),
             "number_of_guests": 2,
-            "final_price": 7000,
             "booking_status": "CONFIRMED",
         },
     )
     assert_status(booking, 201)
-    booking_id = booking.json()["id"]
+
+    booking_data = booking.json()
+    booking_id = booking_data["id"]
+
+    # 3500 + 3600 = 7100
+    assert booking_data["final_price"] == "7100.00"
 
     assert_status(client.get("/api/v1/bookings"), 200)
     assert_status(client.get(f"/api/v1/bookings/{booking_id}"), 200)
@@ -511,7 +550,6 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_out),
                 "check_out": str(check_in),
                 "number_of_guests": 1,
-                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -530,7 +568,6 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_in + timedelta(days=10)),
                 "check_out": str(check_out + timedelta(days=10)),
                 "number_of_guests": 3,
-                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -549,7 +586,6 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_in + timedelta(days=20)),
                 "check_out": str(check_out + timedelta(days=20)),
                 "number_of_guests": 1,
-                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -713,7 +749,6 @@ def test_cross_hotel_isolation():
             "check_in": str(check_in),
             "check_out": str(check_in + timedelta(days=1)),
             "number_of_guests": 1,
-            "final_price": 3000,
             "booking_status": "PENDING",
         },
     )

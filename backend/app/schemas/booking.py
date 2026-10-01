@@ -26,7 +26,6 @@ class BookingCreate(BaseModel):
     check_in: date
     check_out: date
     number_of_guests: int = Field(gt=0)
-    final_price: Decimal = Field(ge=0)
     booking_status: str = "PENDING"
 
 
@@ -34,5 +33,4 @@ class BookingUpdate(BaseModel):
     check_in: date | None = None
     check_out: date | None = None
     number_of_guests: int | None = Field(default=None, gt=0)
-    final_price: Decimal | None = Field(default=None, ge=0)
     booking_status: str | None = None
