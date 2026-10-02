@@ -1,0 +1,14 @@
+# Build-context-local ignores (the api service builds from ./backend,
+# so the root .dockerignore does not apply there).
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+tests
+.env
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+.git

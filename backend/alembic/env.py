@@ -2,6 +2,9 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+# Import every model so Base.metadata is populated for autogenerate.
+# (Without this, target_metadata is empty and autogenerate emits spurious
+# drop_table calls for every table.)
 import app.models  # noqa: F401
 from alembic import context
 from app.core.config import get_settings

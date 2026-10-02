@@ -10,6 +10,8 @@ class GuestResponse(BaseModel):
     phone: str | None
     email: str | None
     nationality: str | None
+    telegram_chat_id: str | None
+    whatsapp_number: str | None
     preferences: str | None
     notes: str | None
     is_active: bool
@@ -24,6 +26,8 @@ class GuestCreate(BaseModel):
     phone: str | None = None
     email: str | None = None
     nationality: str | None = None
+    telegram_chat_id: str | None = None
+    whatsapp_number: str | None = None
     preferences: str | None = None
     notes: str | None = None
     is_active: bool = True
@@ -34,6 +38,8 @@ class GuestUpdate(BaseModel):
     phone: str | None = None
     email: str | None = None
     nationality: str | None = None
+    telegram_chat_id: str | None = None
+    whatsapp_number: str | None = None
     preferences: str | None = None
     notes: str | None = None
     is_active: bool | None = None

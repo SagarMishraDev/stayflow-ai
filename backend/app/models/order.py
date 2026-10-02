@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -9,6 +9,9 @@ from app.db.base import Base
 
 class Order(Base):
     __tablename__ = "orders"
+    # Matches ix_orders_guest created by migration f1a2b3c4d5e6 so that
+    # `alembic check` (metadata vs database) stays green.
+    __table_args__ = (Index("ix_orders_guest", "guest_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -50,8 +53,8 @@ class Order(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 

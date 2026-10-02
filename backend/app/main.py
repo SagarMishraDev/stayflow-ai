@@ -3,8 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from app.api.knowledge import router as knowledge_router
 from app.api.router import router
+from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -15,6 +18,25 @@ configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 
+def _validate_agent_provider() -> None:
+    """Fail fast at startup if the configured LLM provider is unusable.
+
+    The production default is the Inception/Mercury provider, which needs
+    INCEPTION_API_KEY. If the key is missing we refuse to start with a clear
+    error rather than silently serving mock responses — mock is an explicit
+    opt-in (LLM_PROVIDER=mock) for tests and demos only.
+    """
+    from app.agent.config import AgentConfig, build_provider
+
+    config = AgentConfig.from_settings(settings)
+    try:
+        provider = build_provider(config)
+    except ValueError as exc:
+        logger.critical("Agent provider misconfigured: %s", exc)
+        raise RuntimeError(f"Agent provider misconfigured: {exc}") from exc
+    logger.info("Agent provider: %s", provider.name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
@@ -22,6 +44,7 @@ async def lifespan(app: FastAPI):
         settings.app_name,
         settings.app_version,
     )
+    _validate_agent_provider()
 
     yield
 
@@ -63,3 +86,27 @@ app.include_router(
     router,
     prefix=settings.api_prefix,
 )
+
+# Public messaging webhooks (Telegram / WhatsApp). Kept on a separate
+# router so they never pick up the staff JWT auth applied to staff routes.
+app.include_router(
+    webhooks_router,
+    prefix=settings.api_prefix,
+)
+
+# Hotel-knowledge documents (RAG ingestion). Staff-JWT protected and
+# hotel-scoped like the main staff API; ingestion itself runs in the arq
+# worker (see app/jobs), so POST /documents answers 202 immediately.
+app.include_router(
+    knowledge_router,
+    prefix=f"{settings.api_prefix}/knowledge",
+)
+
+# Guest chat frontend (frontend/index.html, styles.css, app.js).
+# Mounted at the /chat sub-path (html=True serves index.html there) so
+# /api/*, /docs, and /redoc keep working untouched.
+from pathlib import Path as _Path  # noqa: E402
+
+_frontend_dir = _Path(__file__).resolve().parent.parent.parent / "frontend"
+if _frontend_dir.is_dir():
+    app.mount("/chat", StaticFiles(directory=_frontend_dir, html=True), name="chat")

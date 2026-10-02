@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+}
+
+/* Visible focus for keyboard navigation, everywhere. */
+:focus-visible {
+  outline: 2px solid #1f6b5c;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer components {
+  .panel {
+    @apply bg-parchment border border-pine-950/15 rounded-xl;
+  }
+  .panel-title {
+    @apply text-base font-semibold tracking-tight;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+      transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
+  }
+  .btn-primary {
+    @apply bg-pine-950 text-white hover:bg-pine-700;
+  }
+  .btn-secondary {
+    @apply bg-parchment border border-pine-950/25 text-ink hover:bg-pine-50;
+  }
+  .btn-danger {
+    @apply bg-brick-600 text-white hover:bg-brick-700;
+  }
+  .input {
+    @apply w-full rounded-lg border border-pine-950/25 bg-white px-3 py-2 text-sm
+      placeholder:text-ink/40 focus:border-pine-700;
+  }
+  .label {
+    @apply block text-sm font-medium mb-1;
+  }
+  .field-error {
+    @apply text-sm text-brick-600 mt-1;
+  }
+  .table {
+    @apply w-full text-sm;
+  }
+  .table th {
+    @apply text-left font-semibold text-ink/70 border-b border-pine-950/15 px-3 py-2;
+  }
+  .table td {
+    @apply border-b border-pine-950/10 px-3 py-2 align-top;
+  }
+  .table tbody tr:hover {
+    @apply bg-pine-50/60;
+  }
+}

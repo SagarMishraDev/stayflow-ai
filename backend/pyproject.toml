@@ -1,31 +1,39 @@
 [project]
-name = "mehman-backend"
+name = "stayflow-ai-backend"
 version = "0.1.0"
 description = "AI-powered hospitality revenue platform backend"
 readme = "../README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "alembic>=1.20.0",
+    "arq>=0.26",
     "fastapi",
-    "openai>=3.16.2",
+    "httpx",
+    "passlib[argon2]",
     "psycopg[binary]>=3.3.5",
     "pydantic-settings",
-    "python-telegram-bot>=22.8",
+    "pyjwt",
+    "sentence-transformers>=3.0.0",
     "sqlalchemy>=2.0.52",
     "uvicorn[standard]",
 ]
 
 [dependency-groups]
 dev = [
+    "fakeredis",
     "pytest",
     "pytest-asyncio",
-    "httpx",
     "ruff",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# "not slow": slow tests download/load the real sentence-transformer model;
+# run them explicitly with `pytest -m slow`.
+addopts = "-ra -m 'not slow'"
+markers = [
+    "slow: downloads/loads the real sentence-transformer model and runs retrieval end-to-end",
+]
 
 [tool.ruff]
 line-length = 100

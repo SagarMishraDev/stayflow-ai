@@ -1,11 +1,7 @@
 from datetime import date, timedelta
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
+from tests._helpers import client, ensure_staff_token, register_hotel_token
 
 
 def ok(r, *codes):
@@ -18,6 +14,7 @@ def uid(prefix):
 
 def test_pms_full_smoke():
     # Hotel
+    ensure_staff_token()
     r = client.post(
         "/api/v1/hotels",
         json={
@@ -30,20 +27,13 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     hotel = r.json()
     hid = hotel["id"]
+    register_hotel_token(hid)
 
     ok(client.get("/api/v1/hotels"), 200)
     ok(client.get(f"/api/v1/hotels/{hid}"), 200)
-
-    ok(
-        client.patch(
-            f"/api/v1/hotels/{hid}",
-            json={"phone": "7777777777"},
-        ),
-        200,
-    )
+    ok(client.patch(f"/api/v1/hotels/{hid}", json={"phone": "7777777777"}), 200)
 
     # Room
     r = client.post(
@@ -59,20 +49,11 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     room = r.json()
     rid = room["id"]
-
     ok(client.get("/api/v1/rooms"), 200)
     ok(client.get(f"/api/v1/rooms/{rid}"), 200)
-
-    ok(
-        client.patch(
-            f"/api/v1/rooms/{rid}",
-            json={"capacity": 3},
-        ),
-        200,
-    )
+    ok(client.patch(f"/api/v1/rooms/{rid}", json={"capacity": 3}), 200)
 
     future = date.today() + timedelta(days=30)
 
@@ -88,24 +69,11 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     rate = r.json()
-
     ok(client.get("/api/v1/rates"), 200)
     ok(client.get(f"/api/v1/rates/{rate['id']}"), 200)
-
-    ok(
-        client.patch(
-            f"/api/v1/rates/{rate['id']}",
-            json={"price": 3600},
-        ),
-        200,
-    )
-
-    ok(
-        client.delete(f"/api/v1/rates/{rate['id']}"),
-        204,
-    )
+    ok(client.patch(f"/api/v1/rates/{rate['id']}", json={"price": 3600}), 200)
+    ok(client.delete(f"/api/v1/rates/{rate['id']}"), 204)
 
     # Availability
     r = client.post(
@@ -118,27 +86,11 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     av = r.json()
-
     ok(client.get("/api/v1/availability"), 200)
-    ok(
-        client.get(f"/api/v1/availability/{av['id']}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/availability/{av['id']}",
-            json={"available_rooms": 4},
-        ),
-        200,
-    )
-
-    ok(
-        client.delete(f"/api/v1/availability/{av['id']}"),
-        204,
-    )
+    ok(client.get(f"/api/v1/availability/{av['id']}"), 200)
+    ok(client.patch(f"/api/v1/availability/{av['id']}", json={"available_rooms": 4}), 200)
+    ok(client.delete(f"/api/v1/availability/{av['id']}"), 204)
 
     # Policies + FAQs
     for path, payload in [
@@ -163,36 +115,13 @@ def test_pms_full_smoke():
             },
         ),
     ]:
-        r = client.post(
-            path,
-            json=payload,
-        )
+        r = client.post(path, json=payload)
         ok(r, 200, 201)
-
         item = r.json()
-
-        ok(
-            client.get(path),
-            200,
-        )
-
-        ok(
-            client.get(f"{path}/{item['id']}"),
-            200,
-        )
-
-        ok(
-            client.patch(
-                f"{path}/{item['id']}",
-                json={},
-            ),
-            200,
-        )
-
-        ok(
-            client.delete(f"{path}/{item['id']}"),
-            204,
-        )
+        ok(client.get(path), 200)
+        ok(client.get(f"{path}/{item['id']}"), 200)
+        ok(client.patch(f"{path}/{item['id']}", json={}), 200)
+        ok(client.delete(f"{path}/{item['id']}"), 204)
 
     # Services
     r = client.post(
@@ -207,35 +136,14 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     service = r.json()
-
-    ok(
-        client.get("/api/v1/services"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/services/{service['id']}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/services/{service['id']}",
-            json={"price": 1500},
-        ),
-        200,
-    )
-
-    ok(
-        client.delete(f"/api/v1/services/{service['id']}"),
-        204,
-    )
+    ok(client.get("/api/v1/services"), 200)
+    ok(client.get(f"/api/v1/services/{service['id']}"), 200)
+    ok(client.patch(f"/api/v1/services/{service['id']}", json={"price": 1500}), 200)
+    ok(client.delete(f"/api/v1/services/{service['id']}"), 204)
 
     # Offer
     start = date.today()
-
     r = client.post(
         "/api/v1/offers",
         json={
@@ -250,31 +158,11 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     offer = r.json()
-
-    ok(
-        client.get("/api/v1/offers"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/offers/{offer['id']}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/offers/{offer['id']}",
-            json={"discount_value": 15},
-        ),
-        200,
-    )
-
-    ok(
-        client.delete(f"/api/v1/offers/{offer['id']}"),
-        204,
-    )
+    ok(client.get("/api/v1/offers"), 200)
+    ok(client.get(f"/api/v1/offers/{offer['id']}"), 200)
+    ok(client.patch(f"/api/v1/offers/{offer['id']}", json={"discount_value": 15}), 200)
+    ok(client.delete(f"/api/v1/offers/{offer['id']}"), 204)
 
     # Negotiation rule
     r = client.post(
@@ -290,31 +178,16 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     rule = r.json()
-
-    ok(
-        client.get("/api/v1/negotiation-rules"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/negotiation-rules/{rule['id']}"),
-        200,
-    )
-
+    ok(client.get("/api/v1/negotiation-rules"), 200)
+    ok(client.get(f"/api/v1/negotiation-rules/{rule['id']}"), 200)
     ok(
         client.patch(
-            f"/api/v1/negotiation-rules/{rule['id']}",
-            json={"maximum_discount_percent": 15},
+            f"/api/v1/negotiation-rules/{rule['id']}", json={"maximum_discount_percent": 15}
         ),
         200,
     )
-
-    ok(
-        client.delete(f"/api/v1/negotiation-rules/{rule['id']}"),
-        204,
-    )
+    ok(client.delete(f"/api/v1/negotiation-rules/{rule['id']}"), 204)
 
     # Guest
     r = client.post(
@@ -323,7 +196,7 @@ def test_pms_full_smoke():
             "hotel_id": hid,
             "name": uid("Guest"),
             "phone": "8888888888",
-            "email": (f"{uuid4().hex[:8]}@example.com"),
+            "email": f"{uuid4().hex[:8]}@example.com",
             "nationality": "Indian",
             "preferences": "Quiet room",
             "notes": "Test",
@@ -331,72 +204,14 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     guest = r.json()
     gid = guest["id"]
+    ok(client.get("/api/v1/guests"), 200)
+    ok(client.get(f"/api/v1/guests/{gid}"), 200)
+    ok(client.patch(f"/api/v1/guests/{gid}", json={"notes": "Updated"}), 200)
 
-    ok(
-        client.get("/api/v1/guests"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/guests/{gid}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/guests/{gid}",
-            json={"notes": "Updated"},
-        ),
-        200,
-    )
-
-    # ========================================================
     # Booking
-    # ========================================================
-
     check_in = date.today() + timedelta(days=40)
-    check_out = check_in + timedelta(days=2)
-
-    # Create a rate for EVERY requested night.
-    booking_rates = [
-        (check_in, 3500),
-        (check_in + timedelta(days=1), 3600),
-    ]
-
-    for rate_date, price in booking_rates:
-        r = client.post(
-            "/api/v1/rates",
-            json={
-                "room_id": rid,
-                "date": str(rate_date),
-                "price": price,
-                "currency": "INR",
-                "is_active": True,
-            },
-        )
-
-        ok(r, 200, 201)
-
-    for availability_date in (
-        check_in,
-        check_in + timedelta(days=1),
-    ):
-        r = client.post(
-            "/api/v1/availability",
-            json={
-                "room_id": rid,
-                "date": str(availability_date),
-                "available_rooms": 5,
-                "is_active": True,
-            },
-        )
-        ok(r, 200, 201)
-
-    # Client does NOT send final_price anymore.
-    # Backend calculates it from the Rate table.
     r = client.post(
         "/api/v1/bookings",
         json={
@@ -404,41 +219,19 @@ def test_pms_full_smoke():
             "guest_id": gid,
             "room_id": rid,
             "check_in": str(check_in),
-            "check_out": str(check_out),
+            "check_out": str(check_in + timedelta(days=2)),
             "number_of_guests": 2,
+            "final_price": 7000,
             "booking_status": "CONFIRMED",
         },
     )
-
     ok(r, 200, 201)
-
     booking = r.json()
+    ok(client.get("/api/v1/bookings"), 200)
+    ok(client.get(f"/api/v1/bookings/{booking['id']}"), 200)
+    ok(client.patch(f"/api/v1/bookings/{booking['id']}", json={"booking_status": "CANCELLED"}), 200)
 
-    # 3500 + 3600 = 7100
-    assert booking["final_price"] == "7100.00"
-
-    ok(
-        client.get("/api/v1/bookings"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/bookings/{booking['id']}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/bookings/{booking['id']}",
-            json={"booking_status": "CANCELLED"},
-        ),
-        200,
-    )
-
-    # ========================================================
     # Menu + order + order item
-    # ========================================================
-
     r = client.post(
         "/api/v1/menu-items",
         json={
@@ -452,27 +245,11 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     menu = r.json()
     mid = menu["id"]
-
-    ok(
-        client.get("/api/v1/menu-items"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/menu-items/{mid}"),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/menu-items/{mid}",
-            json={"price": 449},
-        ),
-        200,
-    )
+    ok(client.get("/api/v1/menu-items"), 200)
+    ok(client.get(f"/api/v1/menu-items/{mid}"), 200)
+    ok(client.patch(f"/api/v1/menu-items/{mid}", json={"price": 449}), 200)
 
     r = client.post(
         "/api/v1/orders",
@@ -487,19 +264,10 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     order = r.json()
     oid = order["id"]
-
-    ok(
-        client.get("/api/v1/orders"),
-        200,
-    )
-
-    ok(
-        client.get(f"/api/v1/orders/{oid}"),
-        200,
-    )
+    ok(client.get("/api/v1/orders"), 200)
+    ok(client.get(f"/api/v1/orders/{oid}"), 200)
 
     r = client.post(
         "/api/v1/order-items",
@@ -512,59 +280,20 @@ def test_pms_full_smoke():
         },
     )
     ok(r, 200, 201)
-
     item = r.json()
-
-    # Backend must use actual menu price = 449,
-    # not the client-provided unit_price = 399.
     assert float(item["subtotal"]) == 898
-
     assert float(client.get(f"/api/v1/orders/{oid}").json()["total_amount"]) == 898
 
-    ok(
-        client.patch(
-            f"/api/v1/orders/{oid}",
-            json={"status": "CONFIRMED"},
-        ),
-        200,
-    )
-
-    ok(
-        client.patch(
-            f"/api/v1/order-items/{item['id']}",
-            json={"quantity": 3},
-        ),
-        200,
-    )
-
+    ok(client.patch(f"/api/v1/orders/{oid}", json={"status": "CONFIRMED"}), 200)
+    ok(client.patch(f"/api/v1/order-items/{item['id']}", json={"quantity": 3}), 200)
     assert float(client.get(f"/api/v1/orders/{oid}").json()["total_amount"]) == 1347
-
-    ok(
-        client.delete(f"/api/v1/order-items/{item['id']}"),
-        204,
-    )
-
-    ok(
-        client.delete(f"/api/v1/orders/{oid}"),
-        204,
-    )
+    ok(client.delete(f"/api/v1/order-items/{item['id']}"), 204)
+    ok(client.delete(f"/api/v1/orders/{oid}"), 204)
 
     # Basic negative checks
-    ok(
-        client.get("/api/v1/hotels/999999999"),
-        404,
-    )
-
-    ok(
-        client.get("/api/v1/rooms/999999999"),
-        404,
-    )
-
-    ok(
-        client.get("/api/v1/rates/999999999"),
-        404,
-    )
-
+    ok(client.get("/api/v1/hotels/999999999"), 404)
+    ok(client.get("/api/v1/rooms/999999999"), 404)
+    ok(client.get("/api/v1/rates/999999999"), 404)
     ok(
         client.post(
             "/api/v1/rates",

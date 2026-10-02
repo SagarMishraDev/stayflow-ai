@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -8,6 +8,7 @@ from app.db.base import Base
 
 class Availability(Base):
     __tablename__ = "availability"
+    __table_args__ = (UniqueConstraint("room_id", "date", name="uq_availability_room_date"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

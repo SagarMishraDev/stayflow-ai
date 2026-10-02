@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StayFlow Grand Hotel — Guest Concierge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!--
+    Full-page chat mount. Served by the backend at /chat (frontend/ is mounted
+    there; see backend/app/main.py). Configuration is public embed config —
+    guests cannot enumerate hotels, so there is intentionally no hotel picker
+    and no call to the staff-only /hotels endpoint.
+  -->
+  <div id="stayflow-chat-root"></div>
+
+  <script>
+    window.STAYFLOW_CHAT = {
+      hotelId: 1,
+      hotelName: "StayFlow Grand Hotel",
+      mode: "fullpage"
+    };
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>

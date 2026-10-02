@@ -1,0 +1,37 @@
+StayFlow AI — Muse merged package
+
+This package is the prebuilt StayFlow source snapshot in this workspace that already contains the selected Muse feature set:
+- Mercury/Inception provider
+- booking drafts and confirmation/revalidation
+- RAG knowledge base and embeddings
+- JWT/RBAC and tenant-oriented security
+- audit logs
+- rate limiting
+- Telegram + WhatsApp connectors
+- background jobs
+- admin/dashboard support
+- expanded tests and Alembic migrations
+
+IMPORTANT:
+- Do not copy or overwrite your .env with this package.
+- Back up your existing project before replacing it.
+- The database is NOT included.
+- Run Alembic migrations against your existing StayFlow database after replacement.
+
+Recommended Windows PowerShell sequence:
+
+cd C:\Users\sagar
+Rename-Item .\mehman-ai .\mehman-ai-backup-$(Get-Date -Format yyyyMMdd-HHmmss)
+Expand-Archive -Path .\StayFlow_AI_MUSE_MERGED.zip -DestinationPath .
+Rename-Item .\stayflow-ai .\mehman-ai
+cd .\mehman-ai\backend
+Copy-Item ..\mehman-ai-backup-*\backend\.env .\.env -ErrorAction SilentlyContinue
+uv sync
+uv run alembic upgrade head
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+
+If you already have an .env, keep it. Do NOT replace it with .env.example.
+
+Note: this package is a source snapshot; validate the final environment and database before using it in production.

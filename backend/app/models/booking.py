@@ -1,7 +1,7 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -9,6 +9,13 @@ from app.db.base import Base
 
 class Booking(Base):
     __tablename__ = "bookings"
+    # Indexes created by migration f1a2b3c4d5e6; declared here so that
+    # `alembic check` (metadata vs database) stays green.
+    __table_args__ = (
+        Index("ix_bookings_room_dates", "room_id", "check_in", "check_out"),
+        Index("ix_bookings_status", "booking_status"),
+        Index("ix_bookings_guest", "guest_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -54,7 +61,7 @@ class Booking(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )

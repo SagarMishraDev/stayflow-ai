@@ -1,0 +1,8 @@
+StayFlow AI updated source package
+- Added opaque public conversation access tokens and migration.
+- Web chat now persists/sends conversation token.
+- Agent binds find_or_create_guest results to conversation context.
+- Dashboard Vite dev proxy added for /api -> FastAPI :8000.
+- CORS example aligned to Vite :5173.
+- Added regression test for conversation-token access control.
+- Local dependency installation could not be completed in this sandbox because external package registry DNS is unavailable; source syntax checks passed.

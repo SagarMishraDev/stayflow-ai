@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Numeric
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -9,6 +9,7 @@ from app.db.base import Base
 
 class Rate(Base):
     __tablename__ = "rates"
+    __table_args__ = (UniqueConstraint("room_id", "date", name="uq_rates_room_date"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

@@ -1,12 +1,14 @@
 from app.models.audit_log import AuditLog
 from app.models.availability import Availability
 from app.models.booking import Booking
+from app.models.booking_draft import BookingDraft
 from app.models.conversation import Conversation
 from app.models.faq import FAQ
 from app.models.guest import Guest
 from app.models.hotel import Hotel
 from app.models.hotel_room import HotelRoom
 from app.models.hotel_user import HotelUser
+from app.models.knowledge import HotelDocument, HotelDocumentChunk
 from app.models.menu_item import MenuItem
 from app.models.message import Message
 from app.models.negotiation_rule import NegotiationRule
@@ -24,10 +26,13 @@ __all__ = [
     "AuditLog",
     "Availability",
     "Booking",
+    "BookingDraft",
     "Conversation",
     "FAQ",
     "Guest",
     "Hotel",
+    "HotelDocument",
+    "HotelDocumentChunk",
     "HotelRoom",
     "HotelUser",
     "MenuItem",

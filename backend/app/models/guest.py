@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -8,14 +8,15 @@ from app.db.base import Base
 
 class Guest(Base):
     __tablename__ = "guests"
+    __table_args__ = (
+        # A messaging-channel identity is unique per hotel so repeat
+        # webhooks resolve to the same guest instead of creating dupes.
+        UniqueConstraint("hotel_id", "telegram_chat_id", name="uq_guests_hotel_telegram_chat_id"),
+        UniqueConstraint("hotel_id", "whatsapp_number", name="uq_guests_hotel_whatsapp_number"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    telegram_user_id: Mapped[int | None] = mapped_column(
-        nullable=True,
-        unique=True,
-        index=True,
-    )
     hotel_id: Mapped[int] = mapped_column(
         ForeignKey("hotels.id"),
         nullable=False,
@@ -41,6 +42,16 @@ class Guest(Base):
         nullable=True,
     )
 
+    # --- Messaging channel identifiers (Prompt-1 sections 4-5) --------------
+    telegram_chat_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    whatsapp_number: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+
     preferences: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -58,6 +69,7 @@ class Guest(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )

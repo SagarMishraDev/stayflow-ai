@@ -1,0 +1,99 @@
+# StayFlow AI — local development / self-host stack.
+#
+#   docker compose up -d --build
+#
+# Services: `db` (Postgres), `redis` (arq job queue), `api` (FastAPI),
+# `worker` (arq background worker for slow jobs like RAG ingestion).
+# Scale workers with: docker compose up -d --scale worker=2
+#
+# The `api` entrypoint runs `alembic upgrade head` before starting uvicorn,
+# so migrations are applied automatically on every (re)start. To run
+# migrations one-off without starting the server:
+#
+#   docker compose run --rm api alembic upgrade head
+#
+# Configuration comes from `.env` at the repo root (never committed);
+# all values below fall back to sane local-dev defaults.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stayflow}
+      POSTGRES_USER: ${POSTGRES_USER:-stayflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stayflow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-stayflow} -d ${POSTGRES_DB:-stayflow}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      # Repo-root context (see backend/Dockerfile): bundles backend/ plus
+      # frontend/ (guest web chat served at /chat) into the image.
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://stayflow:stayflow@db:5432/stayflow}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Redis backs the arq background job queue (Prompt-1 §6): the API
+  # enqueues slow work (RAG document ingestion — chunking + embedding)
+  # and the `worker` service below runs it.
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  # arq worker: runs the background jobs enqueued by the API. Same image
+  # as `api` (the entrypoint runs `alembic upgrade head` first, then execs
+  # the command). PYTHONPATH puts /app/backend on sys.path so the arq CLI
+  # can import app.jobs.queue.
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://stayflow:stayflow@db:5432/stayflow}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONPATH: /app/backend
+    command: ["arq", "app.jobs.queue.WorkerSettings"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

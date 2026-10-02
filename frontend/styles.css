@@ -1,0 +1,375 @@
+/* =====================================================================
+ * StayFlow guest chat — damson plum + marigold on warm blush.
+ * Brand moments (hotel name, card titles) use Fraunces; everything else
+ * uses Inter with system fallbacks.
+ * ===================================================================== */
+
+:root {
+  --plum: #4e2445;
+  --plum-deep: #3a1a33;
+  --marigold: #e89b3c;
+  --marigold-soft: #f6d9a8;
+  --blush: #f8f1e6;
+  --paper: #ffffff;
+  --cocoa: #2b2430;
+  --warm-grey: #8a7b6e;
+  --line: #e7dcc9;
+  --error: #a63a2e;
+  --radius: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  background: var(--blush);
+  color: var(--cocoa);
+  -webkit-font-smoothing: antialiased;
+}
+
+.sf-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ================= Full-page shell ================= */
+
+.sf-fullpage {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--paper);
+  box-shadow: 0 0 0 1px var(--line), 0 24px 60px rgba(78, 36, 69, 0.10);
+}
+
+/* ================= Header ================= */
+
+.sf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 1.1rem;
+  background: linear-gradient(120deg, var(--plum-deep), var(--plum) 70%);
+  color: #fff;
+}
+
+.sf-brand { display: flex; align-items: center; gap: 0.8rem; min-width: 0; }
+
+.sf-mark {
+  flex: none;
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--marigold);
+  color: var(--plum-deep);
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 1.5rem;
+}
+
+.sf-hotel {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 1.12rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sf-tagline {
+  margin: 0.1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--marigold-soft);
+}
+
+/* ================= Buttons ================= */
+
+.sf-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.6rem 1.15rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sf-btn:disabled { opacity: 0.55; cursor: default; }
+
+.sf-btn-primary { background: var(--marigold); color: var(--plum-deep); }
+.sf-btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+
+.sf-btn-ghost {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  padding: 0.45rem 0.95rem;
+  font-size: 0.82rem;
+}
+.sf-btn-ghost:hover { background: rgba(255, 255, 255, 0.12); }
+
+.sf-btn:focus-visible,
+.sf-chip:focus-visible,
+.sf-retry:focus-visible,
+.sf-input:focus-visible,
+.sf-launcher:focus-visible {
+  outline: 3px solid var(--marigold);
+  outline-offset: 2px;
+}
+
+/* ================= Messages ================= */
+
+.sf-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  background:
+    radial-gradient(1200px 300px at 50% -80px, #f3e7d3 0%, transparent 60%),
+    var(--blush);
+}
+
+.sf-messages .message {
+  max-width: 84%;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--radius);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* guest on the right, agent on the left */
+.sf-messages .message.guest {
+  align-self: flex-end;
+  background: var(--plum);
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+
+.sf-messages .message.agent {
+  align-self: flex-start;
+  background: var(--paper);
+  color: var(--cocoa);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 5px;
+  box-shadow: 0 1px 3px rgba(78, 36, 69, 0.06);
+}
+
+.sf-messages .message.system {
+  align-self: center;
+  background: transparent;
+  color: var(--warm-grey);
+  font-size: 0.82rem;
+  text-align: center;
+  max-width: 95%;
+}
+
+.sf-messages .message.error {
+  align-self: center;
+  background: #fbeae6;
+  border: 1px solid #eec4ba;
+  color: var(--error);
+  font-size: 0.88rem;
+  max-width: 95%;
+}
+
+.sf-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.sf-degraded {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.76rem;
+  font-style: italic;
+  color: var(--warm-grey);
+}
+
+/* typing indicator */
+.sf-typing .sf-dots { display: inline-flex; gap: 5px; align-items: center; }
+.sf-typing .sf-dots span {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--plum);
+  animation: sf-blink 1.2s infinite;
+}
+.sf-typing .sf-dots span:nth-child(2) { animation-delay: 0.2s; }
+.sf-typing .sf-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes sf-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sf-typing .sf-dots span { animation: none; opacity: 0.6; }
+}
+
+/* ================= Structured cards ================= */
+
+.sf-card {
+  align-self: flex-start;
+  max-width: 88%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--marigold);
+  border-radius: 12px;
+  padding: 0.8rem 0.95rem;
+  box-shadow: 0 2px 8px rgba(78, 36, 69, 0.07);
+}
+
+.sf-card-title {
+  margin: 0 0 0.5rem;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 1.02rem;
+  color: var(--plum);
+}
+
+.sf-card-list { margin: 0; display: grid; gap: 0.3rem; }
+
+.sf-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.88rem;
+}
+.sf-card-row dt { color: var(--warm-grey); }
+.sf-card-row dd { margin: 0; font-weight: 600; text-align: right; }
+
+.sf-card-note {
+  margin: 0.55rem 0 0;
+  font-size: 0.8rem;
+  color: var(--warm-grey);
+}
+.sf-card-note.sf-warn { color: #8a5a17; }
+
+/* ================= Chips ================= */
+
+.sf-chips {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.sf-chip {
+  border: 1.5px solid var(--marigold);
+  background: transparent;
+  color: var(--plum);
+  border-radius: 999px;
+  padding: 0.5rem 1.05rem;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sf-chip:hover:not(:disabled) { background: var(--marigold); color: var(--plum-deep); }
+.sf-chip:disabled { opacity: 0.55; cursor: default; }
+
+/* ================= Composer ================= */
+
+.sf-composer {
+  padding: 0.75rem 1rem 0.65rem;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+
+.sf-composer form { display: flex; gap: 0.55rem; }
+
+.sf-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.68rem 1rem;
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.94rem;
+  color: var(--cocoa);
+  background: var(--blush);
+  outline: none;
+}
+.sf-input:focus { border-color: var(--plum); background: #fff; }
+
+.sf-fineprint {
+  margin: 0.45rem 0 0;
+  font-size: 0.72rem;
+  color: var(--warm-grey);
+  text-align: center;
+}
+
+/* ================= Floating widget mode ================= */
+
+.sf-widget { position: fixed; z-index: 9999; right: 1.25rem; bottom: 1.25rem; }
+
+.sf-launcher {
+  width: 60px; height: 60px;
+  border: none;
+  border-radius: 50%;
+  background: var(--marigold);
+  color: var(--plum-deep);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 24px rgba(78, 36, 69, 0.35);
+}
+.sf-launcher:hover { filter: brightness(1.05); }
+
+.sf-panel {
+  position: absolute;
+  right: 0;
+  bottom: 72px;
+  width: min(384px, calc(100vw - 2.5rem));
+  height: min(600px, calc(100dvh - 110px));
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(58, 26, 51, 0.35);
+}
+
+.sf-panel[hidden] { display: none; }
+
+.sf-panel .sf-in-panel { height: 100%; max-width: none; margin: 0; box-shadow: none; }
+.sf-panel .sf-header { padding: 0.65rem 0.9rem; }
+.sf-panel .sf-hotel { font-size: 1rem; }
+.sf-panel .sf-messages .message { max-width: 90%; }
+
+/* ================= Small screens ================= */
+
+@media (max-width: 560px) {
+  .sf-fullpage { max-width: none; box-shadow: none; }
+  .sf-header { padding: 0.65rem 0.8rem; }
+  .sf-hotel { font-size: 1rem; }
+  .sf-messages { padding: 0.9rem 0.75rem; }
+  .sf-messages .message { max-width: 92%; }
+  .sf-panel {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+  }
+  .sf-widget { right: 1rem; bottom: 1rem; }
+}

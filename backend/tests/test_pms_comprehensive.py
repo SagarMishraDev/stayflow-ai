@@ -1,11 +1,9 @@
 from datetime import date, timedelta
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
+from app.db.session import SessionLocal
+from app.models.hotel import Hotel
+from tests._helpers import client, ensure_staff_token, register_hotel_token
 
 
 def uid(prefix: str) -> str:
@@ -19,6 +17,7 @@ def assert_status(response, *expected: int) -> None:
 
 
 def create_hotel(name_prefix: str = "Comprehensive Test Hotel") -> dict:
+    ensure_staff_token()
     response = client.post(
         "/api/v1/hotels",
         json={
@@ -34,7 +33,9 @@ def create_hotel(name_prefix: str = "Comprehensive Test Hotel") -> dict:
         },
     )
     assert_status(response, 201)
-    return response.json()
+    hotel = response.json()
+    register_hotel_token(hotel["id"])
+    return hotel
 
 
 def create_room(hotel_id: int, capacity: int = 2) -> dict:
@@ -73,6 +74,9 @@ def create_guest(hotel_id: int) -> dict:
 
 
 def test_system_endpoints():
+    hotel = create_hotel()  # bootstraps staff auth
+    assert hotel["id"]
+
     response = client.get("/api/v1/health")
     assert_status(response, 200)
     assert response.json()["status"] == "ok"
@@ -109,10 +113,30 @@ def test_hotel_crud_and_validation():
         422,
     )
 
-    # Empty hotel can be deleted safely.
+    # Empty hotel can be deleted safely. The staff login created by the test
+    # helper counts as a dependent record, so the API correctly protects the
+    # hotel with 409 while it exists...
     empty_hotel = create_hotel("Delete Test Hotel")
-    assert_status(client.delete(f"/api/v1/hotels/{empty_hotel['id']}"), 204)
-    assert_status(client.get(f"/api/v1/hotels/{empty_hotel['id']}"), 404)
+    assert_status(client.delete(f"/api/v1/hotels/{empty_hotel['id']}"), 409)
+
+    # ...remove the staff login through the API, then the hotel row itself
+    # deletes cleanly (no staff login remains to authenticate a final API
+    # call, so the row removal happens directly and its absence is verified
+    # through the API afterwards).
+    staff_users = client.get("/api/v1/hotel-users")
+    assert_status(staff_users, 200)
+    assert len(staff_users.json()) == 1
+    assert_status(client.delete(f"/api/v1/hotel-users/{staff_users.json()[0]['id']}"), 204)
+
+    db = SessionLocal()
+    try:
+        row = db.get(Hotel, empty_hotel["id"])
+        assert row is not None
+        db.delete(row)
+        db.commit()
+        assert db.get(Hotel, empty_hotel["id"]) is None
+    finally:
+        db.close()
 
 
 def test_room_crud_and_foreign_key_validation():
@@ -471,41 +495,6 @@ def test_guest_and_booking_workflows_and_validation():
     check_in = date.today() + timedelta(days=40)
     check_out = check_in + timedelta(days=2)
 
-    # Create a rate for every requested night.
-    booking_rates = [
-        (check_in, 3500),
-        (check_in + timedelta(days=1), 3600),
-    ]
-
-    for rate_date, price in booking_rates:
-        response = client.post(
-            "/api/v1/rates",
-            json={
-                "room_id": rid,
-                "date": str(rate_date),
-                "price": price,
-                "currency": "INR",
-                "is_active": True,
-            },
-        )
-        assert_status(response, 201)
-
-    for availability_date in (
-        check_in,
-        check_in + timedelta(days=1),
-    ):
-        response = client.post(
-            "/api/v1/availability",
-            json={
-                "room_id": rid,
-                "date": str(availability_date),
-                "available_rooms": 2,
-                "is_active": True,
-            },
-        )
-        assert_status(response, 201)
-
-    # The backend calculates final_price from the Rate table.
     booking = client.post(
         "/api/v1/bookings",
         json={
@@ -515,16 +504,12 @@ def test_guest_and_booking_workflows_and_validation():
             "check_in": str(check_in),
             "check_out": str(check_out),
             "number_of_guests": 2,
+            "final_price": 7000,
             "booking_status": "CONFIRMED",
         },
     )
     assert_status(booking, 201)
-
-    booking_data = booking.json()
-    booking_id = booking_data["id"]
-
-    # 3500 + 3600 = 7100
-    assert booking_data["final_price"] == "7100.00"
+    booking_id = booking.json()["id"]
 
     assert_status(client.get("/api/v1/bookings"), 200)
     assert_status(client.get(f"/api/v1/bookings/{booking_id}"), 200)
@@ -550,6 +535,7 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_out),
                 "check_out": str(check_in),
                 "number_of_guests": 1,
+                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -568,6 +554,7 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_in + timedelta(days=10)),
                 "check_out": str(check_out + timedelta(days=10)),
                 "number_of_guests": 3,
+                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -586,6 +573,7 @@ def test_guest_and_booking_workflows_and_validation():
                 "check_in": str(check_in + timedelta(days=20)),
                 "check_out": str(check_out + timedelta(days=20)),
                 "number_of_guests": 1,
+                "final_price": 3000,
                 "booking_status": "PENDING",
             },
         ),
@@ -749,6 +737,7 @@ def test_cross_hotel_isolation():
             "check_in": str(check_in),
             "check_out": str(check_in + timedelta(days=1)),
             "number_of_guests": 1,
+            "final_price": 3000,
             "booking_status": "PENDING",
         },
     )

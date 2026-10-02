@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -8,6 +8,9 @@ from app.db.base import Base
 
 class ServiceRequest(Base):
     __tablename__ = "service_requests"
+    # Matches ix_service_requests_hotel created by migration f1a2b3c4d5e6 so
+    # that `alembic check` (metadata vs database) stays green.
+    __table_args__ = (Index("ix_service_requests_hotel", "hotel_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -43,7 +46,7 @@ class ServiceRequest(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
