@@ -240,6 +240,14 @@ def main() -> int:
                 "currency": "INR",
                 "timezone": "Asia/Kolkata",
                 "description": "Demo property for the StayFlow AI platform.",
+                # Complete guest-facing details so a fresh install renders
+                # the full landing page (contact + policies sections hide
+                # themselves while these are empty). Demo values only.
+                "address": "12, Pearl Tower, C-Scheme, Jaipur, Rajasthan 302001",
+                "phone": "+91 141 400 2233",
+                "email": "reservations@stayflowgrand.example",
+                "check_in_time": "14:00",
+                "check_out_time": "11:00",
             },
         )
         track(created)

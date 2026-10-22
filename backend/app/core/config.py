@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # tests that assert the sync path). Default False: the API goes through
     # the queue.
     ingest_jobs_sync: bool = False
+    # Public base URL of this deployment (scheme + host, no trailing
+    # slash), e.g. https://stayflow-ai-demo.onrender.com. Used at startup
+    # to register the Telegram webhook against the public address —
+    # behind a host/proxy the app cannot derive it from requests. Unset
+    # in local development: webhook auto-registration is skipped there.
+    app_public_base_url: str | None = None
     # Telegram bot (Bot HTTP API). Webhooks stay public; Telegram
     # authenticates via X-Telegram-Bot-Api-Secret-Token.
     telegram_bot_token: str | None = None

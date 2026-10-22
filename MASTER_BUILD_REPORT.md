@@ -599,3 +599,125 @@ Pending (parent + Sagar): push; Sagar creates the Neon project and
 pastes `DATABASE_URL` + `INCEPTION_API_KEY` into the Render dashboard;
 then verify live (health, Mercury chat reply, data surviving a
 redeploy).
+
+# Enhancement pack 2026-10-22
+
+Five items on top of the live Mercury + Neon build (218 passed baseline).
+All local; push/deploy is the parent's step.
+
+## 1. Real-LLM answer quality (`backend/app/agent/prompts.py`)
+
+The live Mercury agent answered a pool question with "I don't have
+access to specific hotel details… could you please provide your hotel
+ID?" — the system prompt now forbids exactly that. `build_system_prompt`
+gained two blocks ahead of the existing rules (booking gate, tool
+registry, mock provider untouched):
+
+- **Identity**: the agent is the concierge for THIS already-identified
+  hotel; it must NEVER ask for a hotel ID/name or claim it lacks access
+  to the hotel's details — facts come from its tools.
+- **Tools first, always**: any hotel-specific question (amenities,
+  timings, policies, services, menu, offers, rooms, prices) must call
+  the matching real tool before answering — `search_faq`,
+  `get_hotel_policy`, `get_services`, `get_offers`, `get_menu`,
+  `list_rooms`/`get_room_details`, `search_hotel_knowledge`. The front
+  desk may be offered only when tools genuinely return nothing.
+- **Language**: the existing "answer in the guest's language" rule now
+  names Hindi/Hinglish explicitly.
+- Also fixed a stale tool name in the price rule (`room_rate` →
+  `get_room_rate`, the registered name).
+
+Test: `test_system_prompt_grounds_agent_in_the_identified_hotel`
+(tests/test_prompt_injection.py) asserts the directives and tool names.
+
+## 2. Landing services photos matched by service, not position
+
+`frontend/landing/app.js` no longer cycles `exp-1/2/3` by card index
+(which put the spa photo on the Airport Shuttle card). A
+`SERVICE_IMAGE_RULES` keyword table over name+category+description maps:
+spa/wellness/massage → exp-1 (spa), restaurant/dining/food → exp-3
+(restaurant), shuttle/transfer/airport/taxi → **exp-transport.jpg**
+(new: white minivan at an airport terminal, Pexels 39075475, verified
+HTTP 200, JPEG 1200×800, 93,796 B), pool/swim → hero.jpg (pool),
+lobby/reception → exp-2 (lobby). No match (e.g. Laundry) → the same
+gradient fallback figure the error path uses; layout unchanged.
+Verified with `node --check` + a node harness running the seeded
+services through the extracted rules: Airport Shuttle →
+exp-transport.jpg, Spa Session → exp-1.jpg, Laundry → fallback.
+
+## 3. Demo seed: complete hotel details (`backend/scripts/seed_demo.py`)
+
+The seeded hotel now carries address (12, Pearl Tower, C-Scheme,
+Jaipur, Rajasthan 302001), phone (+91 141 400 2233), email
+(reservations@stayflowgrand.example), check_in_time 14:00,
+check_out_time 11:00 — fresh installs render the landing's contact and
+policies sections instead of hiding them. Creation defaults only (the
+seed's natural-key idempotency is unchanged); verified by running the
+seed against a throwaway DB and reading the row back.
+
+## 4. Telegram bot: paste-only activation
+
+The webhook route (`POST /api/v1/webhooks/telegram/{hotel_id}`,
+`X-Telegram-Bot-Api-Secret-Token` verified) already existed; activation
+is now three dashboard pastes:
+
+- `render.yaml`: `APP_PUBLIC_BASE_URL` (value: the demo URL — public),
+  `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET`, both
+  `sync: false`. `.env.demo.example` mirrors them (commented).
+- `app/bots/telegram.py`: new `set_webhook()` — same never-raises
+  contract as `send_message`, passes `secret_token` through.
+- `app/main.py` lifespan: `_register_telegram_webhook()` — acts only
+  when token + secret + base URL are ALL set (no token → returns before
+  any network/DB work, so local runs and tests are unaffected);
+  registers `{APP_PUBLIC_BASE_URL}/api/v1/webhooks/telegram/{lowest
+  hotel id}` (one bot token owns one webhook URL; a warning is logged
+  when several hotels share the deployment); idempotent; every failure
+  is a logged warning, never a boot crash. Config validators verified:
+  the production secret rules fire only for ENVIRONMENT=production, so
+  `demo` + a Telegram token boots clean.
+- Docs: `docs/DEMO_DEPLOY.md` gained the BotFather walkthrough
+  (create bot → token → generate secret → paste both in Render →
+  automatic registration on boot; test by messaging the bot).
+- Tests: `tests/test_telegram_activation.py` (6) — registration with
+  the exact URL + secret when configured (httpx faked), no call without
+  a token, boot survives a Telegram outage, `set_webhook` unit
+  behaviour, demo-env config validation.
+
+## 5. Semantic embeddings — resilient, but NOT flipped on the free tier
+
+`app/knowledge/embeddings.py`: new `ResilientEmbeddingProvider` —
+wraps the semantic provider; the first load/encode failure is logged
+once and *cached*, and the process serves hashed embeddings from then
+on (no retry-storm). `default_embedding_provider()` now returns
+`SentenceTransformerEmbedding` inside this wrapper for
+`EMBEDDING_PROVIDER=sentence-transformer`; `hashed` stays the code
+default and the demo's setting. One existing assertion
+(`test_default_embedding_provider_selection`) was updated to the new
+wrapper type; new `tests/test_embeddings_fallback.py` (3 tests) covers
+fallback engagement, failure caching, dimension fallback and clean
+pass-through.
+
+Local verification (backend venv, real model, this sandbox): the model
+loads lazily (construct peak RSS 52 MB), embeds correctly (384-dim;
+"Do you have a swimming pool?" → pool text at cosine 0.517, far above
+the runner-up 0.169), single embeds after load are ~0.01 s — but the
+**embedding process alone peaks at 501 MB RSS (current 499 MB)** after
+the first `embed_many` (~35 s incl. the one-time ~90 MB download).
+That leaves no headroom for uvicorn + FastAPI + SQLAlchemy on a
+512 MB instance. **Decision: do NOT flip** — `render.yaml` keeps
+`EMBEDDING_PROVIDER=hashed`. On a larger instance the flip is a one-line
+env change, and the new fallback guarantees a failed model load degrades
+to hashed instead of bricking the site. (Known pre-existing caveat,
+unchanged: corpora are dimension-bound — re-ingest after any provider
+switch.)
+
+## Tests
+
+Full suite, mandated recipe (`DATABASE_URL=sqlite:///./stayflow_e2e.db`):
+baseline **218 passed / 2 failed / 2 deselected** → after the pack
+**228 passed / 2 failed / 2 deselected**. The 2 failures are the same
+pre-existing SQLite-env ones (`test_hotel_crud_and_validation`,
+`test_ingest_document_creates_chunks_and_embeddings`); zero
+regressions; +10 new tests (1 prompt, 6 telegram, 3 embeddings).
+`ruff check` + `ruff format --check` clean. Dashboard untouched (no
+rebuild needed); landing change is JS-only plus one new asset.

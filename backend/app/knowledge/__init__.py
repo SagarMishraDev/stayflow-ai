@@ -25,6 +25,7 @@ from app.knowledge.embeddings import (
     ApiEmbeddingProvider,
     EmbeddingProvider,
     HashedBagOfWordsEmbedding,
+    ResilientEmbeddingProvider,
     SentenceTransformerEmbedding,
 )
 from app.knowledge.repository import KnowledgeRepository
@@ -38,14 +39,20 @@ def default_embedding_provider() -> EmbeddingProvider:
     :mod:`app.core.config`):
 
     - ``"sentence-transformer"`` (default): real semantic embeddings from
-      the local model named by ``EMBEDDING_MODEL``.
+      the local model named by ``EMBEDDING_MODEL``, wrapped in a
+      :class:`ResilientEmbeddingProvider` — if the model cannot load or
+      encode (download failure, OOM on a small instance), the process
+      degrades to hashed embeddings instead of crashing.
     - ``"hashed"``: the deterministic stdlib-only hashed bag-of-words
       model — no model download, used by the unit-test suite.
     """
     settings = get_settings()
     if settings.embedding_provider == "hashed":
         return HashedBagOfWordsEmbedding()
-    return SentenceTransformerEmbedding(model_name=settings.embedding_model)
+    return ResilientEmbeddingProvider(
+        SentenceTransformerEmbedding(model_name=settings.embedding_model),
+        HashedBagOfWordsEmbedding(),
+    )
 
 
 __all__ = [
@@ -53,6 +60,7 @@ __all__ = [
     "EmbeddingProvider",
     "HashedBagOfWordsEmbedding",
     "KnowledgeRepository",
+    "ResilientEmbeddingProvider",
     "RetrievedChunk",
     "Retriever",
     "SentenceTransformerEmbedding",

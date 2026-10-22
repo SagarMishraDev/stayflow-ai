@@ -126,6 +126,49 @@ def test_system_prompt_contains_no_secrets():
             assert secret not in prompt, "secret leaked into the system prompt"
 
 
+def test_system_prompt_grounds_agent_in_the_identified_hotel():
+    """The real LLM must never plead "no access" or ask for a hotel ID.
+
+    Regression test for the live Mercury behaviour: asked "do you have a
+    pool?", the agent hedged ("I don't have access to specific hotel
+    details… could you provide your hotel ID?") instead of consulting its
+    tools. The system prompt must pin the agent to the one identified
+    hotel and force a tools-first flow for hotel questions.
+    """
+    ctx = ProviderContext(
+        hotel_id=1,
+        hotel_name="StayFlow Grand Hotel",
+        currency="INR",
+        today="2026-10-22",
+        room_types=[],
+        guest_id=None,
+        guest_name=None,
+    )
+    prompt = build_system_prompt(ctx)
+
+    # Identity: the conversation is about this one, already-identified hotel.
+    assert "THIS hotel — StayFlow Grand Hotel" in prompt
+    # Never ask for / plead missing access to a hotel identifier.
+    assert "NEVER ask the guest for a hotel ID" in prompt
+    assert "NEVER claim that you lack access" in prompt
+    # Tools first for hotel-specific questions, naming the real tools.
+    assert "tools first, always" in prompt
+    for tool_name in (
+        "search_faq",
+        "get_hotel_policy",
+        "get_services",
+        "get_offers",
+        "get_menu",
+        "search_hotel_knowledge",
+    ):
+        assert tool_name in prompt, f"{tool_name} missing from system prompt"
+    # Front desk is the fallback only after tools return nothing.
+    assert "genuinely return nothing" in prompt
+    assert "front desk" in prompt
+    # Reply in the guest's language, Hindi/Hinglish included.
+    assert "Hinglish" in prompt
+
+
 # --------------------------------------------------------------------- #
 # 2. "give me another hotel's information"                              #
 # --------------------------------------------------------------------- #

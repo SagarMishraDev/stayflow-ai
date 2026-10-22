@@ -19,6 +19,7 @@ from app.db.session import get_db
 from app.knowledge import (
     HashedBagOfWordsEmbedding,
     KnowledgeRepository,
+    ResilientEmbeddingProvider,
     Retriever,
     SentenceTransformerEmbedding,
     chunk_text,
@@ -566,8 +567,13 @@ def test_default_embedding_provider_selection(monkeypatch):
         ),
     )
     provider = knowledge_pkg.default_embedding_provider()
-    assert isinstance(provider, SentenceTransformerEmbedding)
-    assert provider.model_name == "all-MiniLM-L6-v2"
+    # Since the enhancement pack, the semantic provider is served through
+    # the resilient wrapper: a model that fails to load/encode degrades
+    # the process to hashed embeddings instead of crashing it.
+    assert isinstance(provider, ResilientEmbeddingProvider)
+    assert provider._primary.model_name == "all-MiniLM-L6-v2"
+    assert isinstance(provider._fallback, HashedBagOfWordsEmbedding)
+    assert provider.primary_failed is False
 
 
 # --------------------------------------------------------------------- #

@@ -39,14 +39,54 @@
     "/landing/assets/room-2.jpg",
     "/landing/assets/room-3.jpg",
   ];
-  var EXPERIENCE_IMAGES = [
-    "/landing/assets/exp-1.jpg",
-    "/landing/assets/exp-2.jpg",
-    "/landing/assets/exp-3.jpg",
+  /* Service photography is matched by the service itself — name,
+   * category and description keywords — NEVER by card position (the old
+   * index-based mapping put the spa photo on the Airport Shuttle card).
+   * Local assets: exp-1 = spa, exp-2 = hotel lobby, exp-3 = restaurant,
+   * exp-transport = white minivan at an airport terminal (Pexels
+   * 39075475), hero = pool at golden hour. Services with no fitting
+   * photo (laundry, housekeeping, …) deliberately get no image and
+   * render the gradient fallback figure instead. */
+  var SERVICE_IMAGE_RULES = [
+    { keys: ["spa", "wellness", "massage"], src: "/landing/assets/exp-1.jpg" },
+    {
+      keys: ["shuttle", "transfer", "airport", "taxi", "cab", "transport", "chauffeur"],
+      src: "/landing/assets/exp-transport.jpg",
+    },
+    {
+      keys: ["restaurant", "dining", "food", "cuisine", "breakfast", "cafe"],
+      src: "/landing/assets/exp-3.jpg",
+    },
+    { keys: ["pool", "swim"], src: HERO_IMAGE },
+    { keys: ["lobby", "reception", "front desk"], src: "/landing/assets/exp-2.jpg" },
   ];
+
+  function serviceImage(svc) {
+    var hay = (
+      (svc.name || "") + " " + (svc.category || "") + " " + (svc.description || "")
+    ).toLowerCase();
+    for (var i = 0; i < SERVICE_IMAGE_RULES.length; i++) {
+      var rule = SERVICE_IMAGE_RULES[i];
+      for (var j = 0; j < rule.keys.length; j++) {
+        if (hay.indexOf(rule.keys[j]) !== -1) return rule.src;
+      }
+    }
+    return null;
+  }
+
+  /* Gradient-only media figure (no photo): same markup/classes the
+   * error path swaps in, so layout is identical. */
+  function mediaFallback(altClass) {
+    var fig = el("figure", "sf-card-media");
+    fig.appendChild(
+      el("div", "sf-card-media-fallback" + (altClass ? " " + altClass : ""))
+    );
+    return fig;
+  }
 
   /* Build a card media figure: real photo, gradient fallback on error. */
   function photoFigure(src, alt, altClass) {
+    if (!src) return mediaFallback(altClass);
     var fig = el("figure", "sf-card-media");
     var img = el("img");
     img.src = src;
@@ -198,7 +238,7 @@
     servicesGrid.textContent = "";
     (data.services || []).forEach(function (svc, idx) {
       var card = el("article", "sf-card");
-      card.appendChild(photoFigure(EXPERIENCE_IMAGES[idx % EXPERIENCE_IMAGES.length], svc.name + " — photo", idx % 2 ? "sf-card-media-fallback-alt" : ""));
+      card.appendChild(photoFigure(serviceImage(svc), svc.name + " — photo", idx % 2 ? "sf-card-media-fallback-alt" : ""));
       card.appendChild(el("h3", null, svc.name));
       if (svc.description) card.appendChild(el("p", null, svc.description));
       if (svc.category) card.appendChild(el("p", "sf-meta", svc.category));

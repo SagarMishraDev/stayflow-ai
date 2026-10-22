@@ -61,3 +61,18 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         value: Preview@123
+      # --- Optional: Telegram guest bot (paste-only activation) -------
+      # Public URL of this service; the app uses it at startup to
+      # register the Telegram webhook. Not a secret.
+      - key: APP_PUBLIC_BASE_URL
+        value: https://stayflow-ai-demo.onrender.com
+      - key: TELEGRAM_BOT_TOKEN
+        # From @BotFather (create the bot, copy its token) — paste in
+        # the Render dashboard. Without it the bot stays off and the app
+        # boots exactly as today.
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        # Any long random string (e.g. `openssl rand -hex 32`). The app
+        # registers it with Telegram as the webhook secret_token and
+        # verifies it on every inbound update. Paste in the dashboard.
+        sync: false

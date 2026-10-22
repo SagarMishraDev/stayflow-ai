@@ -96,6 +96,42 @@ loses data.
 to boot without the full production secret set (Telegram/Twilio …);
 see the comment in `render.yaml`.
 
+## Telegram bot (optional, paste-only activation)
+
+The demo can also serve guests on Telegram: the same agent, the same
+booking tools, over the Bot API. The webhook route and connector have
+always been in the app — activation is three pastes, no code change:
+
+1. In Telegram, open **@BotFather** → `/newbot` → pick a name and a
+   username for the bot. BotFather replies with the bot **token**.
+2. Generate a webhook secret, e.g. `openssl rand -hex 32`.
+3. On Render: `stayflow-ai-demo` → **Environment** → set
+   `TELEGRAM_BOT_TOKEN` (the BotFather token) and
+   `TELEGRAM_WEBHOOK_SECRET` (the random string). `APP_PUBLIC_BASE_URL`
+   is already set in `render.yaml` to the service's public URL. Save —
+   the service redeploys.
+4. On startup the app registers the webhook itself
+   (`setWebhook` → `{APP_PUBLIC_BASE_URL}/api/v1/webhooks/telegram/{hotel_id}`,
+   with the secret as Telegram's `secret_token`, which the webhook
+   route verifies on every update). Watch the Render logs for
+   `Telegram webhook registered: …`. Registration is idempotent and
+   failure-tolerant: if Telegram is unreachable the app logs a warning
+   and boots anyway — the website is never held hostage by the bot.
+
+Notes:
+
+- One bot token = one webhook URL, and the webhook path is per-hotel,
+  so the bot serves the (single) demo hotel; a multi-hotel deployment
+  gives each hotel its own bot.
+- To test: open the bot in Telegram and message it like a guest —
+  "Hi, do you have a pool?", "I want a room from 23/11 to 25/11" — the
+  reply comes from the same Mercury agent as the website chat, and the
+  conversation appears in the staff dashboard.
+- To switch the bot off again, clear `TELEGRAM_BOT_TOKEN` in the
+  dashboard and redeploy; with no token the startup hook does nothing.
+- `scripts/register_telegram_webhook.py` remains available for manual
+  registration (e.g. pointing a bot at a local tunnel while developing).
+
 ## Run the same image locally
 
 ```bash

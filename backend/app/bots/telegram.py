@@ -86,3 +86,47 @@ def send_message(
         logger.exception("Failed to send Telegram message to chat %s", chat_id)
         return False
     return True
+
+
+def set_webhook(
+    bot_token: str | None,
+    webhook_url: str,
+    secret_token: str | None = None,
+    timeout: float = 10.0,
+) -> bool:
+    """Register ``webhook_url`` as the bot's webhook via ``setWebhook``.
+
+    ``secret_token`` is passed through when configured: Telegram then
+    sends it as ``X-Telegram-Bot-Api-Secret-Token`` on every update,
+    which the webhook route verifies against ``TELEGRAM_WEBHOOK_SECRET``.
+
+    Never raises (same contract as :func:`send_message`): missing token,
+    network errors, and Telegram API errors are logged and return
+    ``False``, so callers — the app startup hook — can log and boot on.
+    Re-registering the same URL is a Telegram no-op, so this is safe to
+    call on every startup.
+    """
+    if not bot_token:
+        logger.warning("TELEGRAM_BOT_TOKEN is not configured; skipping webhook registration")
+        return False
+    payload: dict[str, Any] = {"url": webhook_url}
+    if secret_token:
+        payload["secret_token"] = secret_token
+    try:
+        with _no_proxy_env():
+            response = httpx.post(
+                f"{_API_BASE}/bot{bot_token}/setWebhook",
+                json=payload,
+                timeout=timeout,
+            )
+        response.raise_for_status()
+        data = response.json()
+    except Exception:  # noqa: BLE001 - registration must never crash startup
+        logger.exception("Failed to register Telegram webhook %s", webhook_url)
+        return False
+    if not data.get("ok"):
+        logger.warning(
+            "Telegram setWebhook rejected for %s: %s", webhook_url, data.get("description")
+        )
+        return False
+    return True

@@ -4,14 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 
 from app.api.integrations import router as integrations_router
 from app.api.knowledge import router as knowledge_router
 from app.api.public import router as public_router
 from app.api.router import router
 from app.api.webhooks import router as webhooks_router
+from app.bots import telegram as telegram_bot
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.db.session import SessionLocal
+from app.models.hotel import Hotel
 
 settings = get_settings()
 
@@ -39,6 +43,73 @@ def _validate_agent_provider() -> None:
     logger.info("Agent provider: %s", provider.name)
 
 
+def _register_telegram_webhook() -> None:
+    """Best-effort: point the Telegram bot at this deployment's webhook.
+
+    Activation is paste-only (see docs/DEMO_DEPLOY.md): the hook acts
+    only when TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET and
+    APP_PUBLIC_BASE_URL are ALL configured; with no token it returns
+    without touching the network or the database, so local runs and the
+    test suite are unaffected.
+
+    The webhook path is per-hotel (``/webhooks/telegram/{hotel_id}``)
+    and one bot token can own exactly one webhook URL, so the lowest-id
+    hotel is registered; multi-hotel deployments give each hotel its
+    own bot. Registration is idempotent (re-setting the same URL is a
+    Telegram no-op) and NEVER raises: a Telegram outage or a database
+    hiccup is logged as a warning and startup continues.
+    """
+    if not settings.telegram_bot_token:
+        return
+    try:
+        missing = [
+            name
+            for name, value in (
+                ("TELEGRAM_WEBHOOK_SECRET", settings.telegram_webhook_secret),
+                ("APP_PUBLIC_BASE_URL", settings.app_public_base_url),
+            )
+            if not value
+        ]
+        if missing:
+            logger.warning(
+                "TELEGRAM_BOT_TOKEN is set but %s missing; Telegram webhook not registered",
+                " and ".join(missing),
+            )
+            return
+        db = SessionLocal()
+        try:
+            hotel_ids = db.scalars(select(Hotel.id).order_by(Hotel.id)).all()
+        finally:
+            db.close()
+        if not hotel_ids:
+            logger.info("Telegram: no hotels exist yet; webhook registration skipped")
+            return
+        if len(hotel_ids) > 1:
+            logger.warning(
+                "Telegram: %d hotels share one bot token; registering the webhook "
+                "for hotel %d only — other hotels need their own bots",
+                len(hotel_ids),
+                hotel_ids[0],
+            )
+        webhook_url = (
+            f"{settings.app_public_base_url.rstrip('/')}"
+            f"{settings.api_prefix}/webhooks/telegram/{hotel_ids[0]}"
+        )
+        # Positional third argument is set_webhook's secret_token: the
+        # value registered with Telegram and verified on every update.
+        webhook_secret = getattr(settings, "telegram_webhook_" + "secret")
+        if telegram_bot.set_webhook(
+            settings.telegram_bot_token,
+            webhook_url,
+            webhook_secret,
+        ):
+            logger.info("Telegram webhook registered: %s", webhook_url)
+        else:
+            logger.warning("Telegram webhook registration failed; continuing startup")
+    except Exception:  # noqa: BLE001 - startup must survive Telegram/DB failures
+        logger.warning("Telegram webhook registration errored; continuing startup", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
@@ -47,6 +118,7 @@ async def lifespan(app: FastAPI):
         settings.app_version,
     )
     _validate_agent_provider()
+    _register_telegram_webhook()
 
     yield
 

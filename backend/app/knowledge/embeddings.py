@@ -16,9 +16,12 @@ a hosted embedding API — it is deliberately *not* wired in by default.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider(Protocol):
@@ -150,6 +153,68 @@ class HashedBagOfWordsEmbedding:
 
     def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(text) for text in texts]
+
+
+class ResilientEmbeddingProvider:
+    """Primary (semantic) embeddings with a cached hashed safety net.
+
+    Wraps a primary provider — normally
+    :class:`SentenceTransformerEmbedding` — and a
+    :class:`HashedBagOfWordsEmbedding` fallback. The FIRST primary
+    failure (package missing, model download error, OOM while loading or
+    encoding) is logged once and the failure is *cached*: every later
+    call in this process goes straight to the fallback instead of
+    retrying a load that already failed, so a broken model can never
+    retry-storm or stall requests. Successful primary calls are passed
+    through untouched.
+
+    This is what makes ``EMBEDDING_PROVIDER=sentence-transformer`` safe
+    on a small (512 MB) instance: the worst case is a process that
+    quietly degrades to hashed embeddings, never a crashed app. Note
+    the providers return different dimensions (384 vs 256), so a corpus
+    embedded by one must be re-ingested if the provider serving it
+    changes — the same rule as switching providers by configuration.
+    """
+
+    def __init__(self, primary: EmbeddingProvider, fallback: EmbeddingProvider) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._primary_failed = False
+
+    @property
+    def primary_failed(self) -> bool:
+        """True once the primary has failed and the fallback is serving."""
+        return self._primary_failed
+
+    def _trip(self, exc: Exception) -> None:
+        if not self._primary_failed:
+            self._primary_failed = True
+            logger.warning(
+                "Semantic embedding provider failed (%s: %s); "
+                "falling back to hashed embeddings for this process",
+                type(exc).__name__,
+                exc,
+            )
+
+    @property
+    def dimension(self) -> int:
+        if not self._primary_failed:
+            try:
+                return self._primary.dimension
+            except Exception as exc:  # noqa: BLE001 - any load failure trips the fallback
+                self._trip(exc)
+        return self._fallback.dimension
+
+    def embed(self, text: str) -> list[float]:
+        return self.embed_many([text])[0]
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        if not self._primary_failed:
+            try:
+                return self._primary.embed_many(texts)
+            except Exception as exc:  # noqa: BLE001 - degrade, never crash retrieval
+                self._trip(exc)
+        return self._fallback.embed_many(texts)
 
 
 class ApiEmbeddingProvider:
