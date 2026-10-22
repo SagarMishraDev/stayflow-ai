@@ -21,9 +21,9 @@
  * API contract (backend/app/agent/schemas.py + app/api/router.py):
  *   POST {apiBase}/api/v1/agent/chat
  *   Request:  { hotel_id: int (required), message: str (1-4000),
- *               conversation_id: int|null, conversation_token: string|null, channel }
- *   Response: { reply: str, conversation_id: int, conversation_token: string,
- *               iterations: int, degraded: bool, tool_trace: [{ tool, arguments, ok,
+ *               conversation_id: int|null, guest_id: int|null, channel }
+ *   Response: { reply: str, conversation_id: int, iterations: int,
+ *               degraded: bool, tool_trace: [{ tool, arguments, ok,
  *               result, error }] }
  *
  * Structured cards are derived ONLY from tool_trace results:
@@ -106,11 +106,10 @@ window.StayFlowChat = (function () {
         ? opts.apiBase.replace(/\/+$/, "")
         : "";
     var chatUrl = apiBase + CHAT_PATH;
-    var sessionKey = "stayflow_conversation_" + hotelId;
+    var sessionKey = "stayflow_conversation_id_" + hotelId;
 
     var state = {
       conversationId: loadConversationId(),
-      conversationToken: loadConversationToken(),
       sending: false,
       lastFailedMessage: null,
       open: opts.mode !== "widget", // widget starts closed
@@ -372,7 +371,7 @@ window.StayFlowChat = (function () {
     /* ---------- conversation persistence ---------- */
     function loadConversationId() {
       try {
-        var raw = sessionStorage.getItem(sessionKey + "_id");
+        var raw = sessionStorage.getItem(sessionKey);
         var id = raw ? parseInt(raw, 10) : NaN;
         return Number.isInteger(id) ? id : null;
       } catch (e) {
@@ -380,21 +379,10 @@ window.StayFlowChat = (function () {
       }
     }
 
-    function loadConversationToken() {
-      try {
-        var token = sessionStorage.getItem(sessionKey + "_token");
-        return token && token.length >= 20 ? token : null;
-      } catch (e) {
-        return null;
-      }
-    }
-
-    function saveConversation(id, token) {
+    function saveConversationId(id) {
       state.conversationId = id;
-      state.conversationToken = token;
       try {
-        sessionStorage.setItem(sessionKey + "_id", String(id));
-        sessionStorage.setItem(sessionKey + "_token", String(token));
+        sessionStorage.setItem(sessionKey, String(id));
       } catch (e) {
         /* storage unavailable — conversation still works for this page view */
       }
@@ -402,10 +390,8 @@ window.StayFlowChat = (function () {
 
     function resetConversation() {
       state.conversationId = null;
-      state.conversationToken = null;
       try {
-        sessionStorage.removeItem(sessionKey + "_id");
-        sessionStorage.removeItem(sessionKey + "_token");
+        sessionStorage.removeItem(sessionKey);
       } catch (e) {}
       clearChips();
       messagesEl.innerHTML = "";
@@ -444,7 +430,6 @@ window.StayFlowChat = (function () {
           hotel_id: hotelId,
           message: message.slice(0, MAX_LEN),
           conversation_id: state.conversationId,
-          conversation_token: state.conversationToken,
           channel: "web",
         }),
       })
@@ -463,12 +448,8 @@ window.StayFlowChat = (function () {
         .then(function (data) {
           state.lastFailedMessage = null;
           hideTyping();
-          if (
-            data &&
-            typeof data.conversation_id === "number" &&
-            typeof data.conversation_token === "string"
-          ) {
-            saveConversation(data.conversation_id, data.conversation_token);
+          if (data && typeof data.conversation_id === "number") {
+            saveConversationId(data.conversation_id);
           }
           renderAgentReply(data || {});
         })

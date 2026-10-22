@@ -60,7 +60,6 @@ class ChatResult:
     reply: str
     conversation_id: int
     iterations: int
-    conversation_token: str | None = None
     tool_trace: list[ToolTraceEntry] = field(default_factory=list)
     degraded: bool = False
 
@@ -136,7 +135,6 @@ def run_chat(
     hotel_id: int,
     message: str,
     conversation_id: int | None = None,
-    conversation_token: str | None = None,
     guest_id: int | None = None,
     channel: str = "web",
     config: AgentConfig | None = None,
@@ -161,7 +159,6 @@ def run_chat(
         guest_id=guest_id,
         channel=channel,
         conversation_id=conversation_id,
-        conversation_token=conversation_token,
     )
     db.commit()
 
@@ -240,15 +237,6 @@ def run_chat(
                     error=result.error,
                 )
                 trace.append(entry)
-                if (
-                    result.ok
-                    and call.name == "find_or_create_guest"
-                    and result.data
-                    and isinstance(result.data.get("guest_id"), int)
-                ):
-                    resolved_guest_id = result.data["guest_id"]
-                    tool_ctx.guest_id = resolved_guest_id
-                    conversation.guest_id = resolved_guest_id
                 conversation_store.add_message(
                     db,
                     conversation.id,
@@ -289,7 +277,6 @@ def run_chat(
     return ChatResult(
         reply=reply,
         conversation_id=conversation.id,
-        conversation_token=conversation.access_token,
         iterations=iterations,
         tool_trace=trace,
         degraded=degraded,

@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1
+#
+# StayFlow AI — SINGLE-SERVICE DEMO image.
+#
+# Builds everything needed for the public demo into one container that
+# serves, from one FastAPI process on one port ($PORT, default 8000):
+#   /            hotel landing page (dashboard URL injected as /dashboard/)
+#   /chat        guest chat        /widget + /widget.js   embeddable widget
+#   /api/v1/*    REST + agent + public APIs
+#   /dashboard/  staff dashboard SPA (built here, base /dashboard/)
+#
+# Build from the REPO ROOT:
+#   docker build -f Dockerfile.demo -t stayflow-demo .
+# Run:
+#   docker run -p 8000:8000 --env-file .env.demo stayflow-demo
+# (see docs/DEMO_DEPLOY.md and render.yaml)
+#
+# This file is DEMO-ONLY and deliberately separate from backend/Dockerfile
+# (the production multi-service build, which is untouched). Differences:
+# demo seeding uses create_all + scripts/seed_demo.py instead of Alembic,
+# and the LLM runs on the mock provider. Do not use this image for real
+# production data.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — dashboard SPA, built for the /dashboard/ subpath
+# ---------------------------------------------------------------------------
+FROM node:20-slim AS dashboard
+
+WORKDIR /build
+
+COPY frontend/dashboard/package.json frontend/dashboard/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/dashboard/index.html frontend/dashboard/vite.config.ts \
+     frontend/dashboard/tsconfig.json frontend/dashboard/tailwind.config.js \
+     frontend/dashboard/postcss.config.js ./
+COPY frontend/dashboard/src ./src
+
+ENV VITE_BASE=/dashboard/
+RUN npm run build:demo
+
+# ---------------------------------------------------------------------------
+# Stage 2 — backend dependencies (locked, via uv — same pattern as
+# backend/Dockerfile)
+# ---------------------------------------------------------------------------
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project
+
+# ---------------------------------------------------------------------------
+# Stage 3 — runtime
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/backend/.venv/bin:$PATH"
+
+WORKDIR /app/backend
+
+COPY --from=builder /app/.venv /app/backend/.venv
+
+# App code + alembic (kept for parity/debugging) + seed scripts (the demo
+# wrapper runs scripts/seed_demo.py when DEMO_SEED=1).
+COPY backend/app ./app
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./
+COPY backend/scripts ./scripts
+
+# All frontends: guest chat (/chat), landing (/), widget (/widget) …
+COPY frontend /app/frontend
+# … with the demo-built dashboard placed where app.demo_main looks for it.
+COPY --from=dashboard /build/dist-demo /app/frontend/dashboard/dist-demo
+
+EXPOSE 8000
+
+# DEMO_SEED=1 (set in render.yaml / your env file) makes the wrapper seed
+# the demo hotel on first boot. $PORT is provided by the host (Render);
+# it defaults to 8000 for a plain `docker run`.
+CMD ["sh", "-c", "uvicorn app.demo_main:app --app-dir /app/backend --host 0.0.0.0 --port ${PORT:-8000}"]

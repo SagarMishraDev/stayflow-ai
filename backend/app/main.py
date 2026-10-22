@@ -5,7 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.integrations import router as integrations_router
 from app.api.knowledge import router as knowledge_router
+from app.api.public import router as public_router
 from app.api.router import router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
@@ -79,6 +81,9 @@ app.add_middleware(
     allow_headers=[
         "Authorization",
         "Content-Type",
+        "X-StayFlow-Signature",
+        "X-StayFlow-Timestamp",
+        "Idempotency-Key",
     ],
 )
 
@@ -102,6 +107,19 @@ app.include_router(
     prefix=f"{settings.api_prefix}/knowledge",
 )
 
+# Public widget API (Master Prompt §11): hotels resolved by public_id
+# only, rate-limited, no staff JWT. Plus the server-to-server integration
+# API and its staff settings endpoints (§12): the chat route is
+# HMAC-authenticated per hotel; the settings routes require a staff JWT.
+app.include_router(
+    public_router,
+    prefix=settings.api_prefix,
+)
+app.include_router(
+    integrations_router,
+    prefix=settings.api_prefix,
+)
+
 # Guest chat frontend (frontend/index.html, styles.css, app.js).
 # Mounted at the /chat sub-path (html=True serves index.html there) so
 # /api/*, /docs, and /redoc keep working untouched.
@@ -110,3 +128,36 @@ from pathlib import Path as _Path  # noqa: E402
 _frontend_dir = _Path(__file__).resolve().parent.parent.parent / "frontend"
 if _frontend_dir.is_dir():
     app.mount("/chat", StaticFiles(directory=_frontend_dir, html=True), name="chat")
+
+# Embeddable widget (frontend/widget/): the loader script, its stylesheet,
+# the iframe chat page, and a demo/test page. Served under /widget/*, plus
+# the loader at the canonical /widget.js path used by the embed snippet:
+#   <script src="https://YOUR_HOSTED_DOMAIN/widget.js"
+#           data-hotel-id="HOTEL_PUBLIC_ID" async></script>
+from fastapi.responses import FileResponse as _FileResponse  # noqa: E402
+
+_widget_dir = _frontend_dir / "widget"
+if _widget_dir.is_dir():
+    app.mount("/widget", StaticFiles(directory=_widget_dir, html=True), name="widget")
+
+    @app.get("/widget.js", include_in_schema=False)
+    async def _widget_js():  # pragma: no cover - trivial file serving
+        return _FileResponse(
+            _widget_dir / "widget.js",
+            media_type="application/javascript",
+        )
+
+
+# Public hotel landing page (frontend/landing/): served at the site root
+# "/" so a visitor lands on the hotel's page first. Its assets live under
+# /landing/* (the page references them by absolute path, so it renders
+# identically at "/" and at "/landing/"). This is an explicit root route
+# plus a static mount — no catch-all — so /api/*, /docs, /chat, /widget
+# and /widget.js keep winning their own paths.
+_landing_dir = _frontend_dir / "landing"
+if _landing_dir.is_dir():
+    app.mount("/landing", StaticFiles(directory=_landing_dir), name="landing")
+
+    @app.get("/", include_in_schema=False)
+    async def _landing_root():  # pragma: no cover - trivial file serving
+        return _FileResponse(_landing_dir / "index.html", media_type="text/html")

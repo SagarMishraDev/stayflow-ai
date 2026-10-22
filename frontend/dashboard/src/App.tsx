@@ -15,6 +15,7 @@ import ServiceRequests from "./pages/ServiceRequests";
 import { Conversations, ConversationDetail } from "./pages/Conversations";
 import { Guests, GuestDetail } from "./pages/Guests";
 import Menu from "./pages/Menu";
+import Orders from "./pages/Orders";
 import Services from "./pages/Services";
 import Knowledge from "./pages/Knowledge";
 import Notifications from "./pages/Notifications";
@@ -53,7 +54,11 @@ function RequireRole({ roles, children }: { roles: string[]; children: ReactNode
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* basename mirrors the Vite build base: "" for the normal build
+          (base "/"), "/dashboard" for the single-service demo build
+          (VITE_BASE=/dashboard/), so all routes/links stay under the
+          subpath without hard-coding it anywhere. */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || undefined}>
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -76,6 +81,7 @@ export default function App() {
               <Route path="guests" element={<Guests />} />
               <Route path="guests/:id" element={<GuestDetail />} />
               <Route path="menu" element={<Menu />} />
+              <Route path="orders" element={<Orders />} />
               <Route path="services" element={<Services />} />
               <Route path="knowledge" element={<Knowledge />} />
               <Route path="notifications" element={<Notifications />} />

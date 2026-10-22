@@ -1,0 +1,45 @@
+# StayFlow AI — public DEMO deployment (Render blueprint).
+#
+# One free web service, Docker runtime, single port: landing page,
+# guest chat, widget, API and the staff dashboard all served by
+# app.demo_main (see Dockerfile.demo + docs/DEMO_DEPLOY.md).
+#
+# WHY ENVIRONMENT=demo (not production): app/core/config.py refuses to
+# boot with ENVIRONMENT=production unless production secrets are set
+# (Telegram/Twilio tokens), DATABASE_URL is PostgreSQL (SQLite is
+# rejected) — by design. This free demo intentionally runs the mock LLM
+# on a throwaway SQLite database, so it uses the non-production "demo"
+# environment. Do NOT reuse this blueprint for real production data.
+#
+# Demo login (DEMO-ONLY, seeded on first boot, change nothing — it is a
+# throwaway demo account on throwaway data):
+#   email    admin@stayflowgrand.example
+#   password is the SEED_ADMIN_PASSWORD value below (demo-only)
+
+services:
+  - type: web
+    name: stayflow-ai-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile.demo
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: DEMO_SEED
+        value: "1"
+      - key: ENVIRONMENT
+        value: demo
+      - key: LLM_PROVIDER
+        value: mock
+      - key: AGENT_PROVIDER
+        value: mock
+      - key: EMBEDDING_PROVIDER
+        value: hashed
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        # Ephemeral on the free plan: the demo re-seeds itself on every
+        # fresh boot (DEMO_SEED=1), so data loss on restart is expected
+        # and harmless for a demo.
+        value: sqlite:////tmp/stayflow-demo.db
+      - key: SEED_ADMIN_PASSWORD
+        value: Preview@123

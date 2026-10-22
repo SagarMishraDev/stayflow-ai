@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StayFlow AI — Hotel</title>
+  <meta name="description" content="Official hotel website — rooms, offers, dining and guest services, powered by StayFlow AI.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700;6..12,800;6..12,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/landing/styles.css">
+</head>
+<body class="sf-landing">
+  <!-- Public hotel landing page. Every hotel value on this page is loaded
+       from GET /api/v1/public/hotels/{public_id}/landing (or the
+       featured-hotel variant) — nothing about the hotel is hard-coded or
+       invented. Sections whose data the hotel has not provided are
+       hidden, not filled with filler. Design language: paper/ink/sun/
+       coral/teal tokens, Barlow Condensed display type + Nunito Sans. -->
+
+  <header class="sf-nav" id="top">
+    <a class="sf-nav-brand" href="#top">
+      <span class="sf-logo-mark" aria-hidden="true"></span>
+      <span id="nav-hotel-name">StayFlow Hotel</span>
+    </a>
+    <button type="button" class="sf-nav-toggle" id="btn-nav-toggle" aria-expanded="false" aria-controls="nav-links" aria-label="Open menu">
+      <span class="sf-nav-toggle-bar"></span>
+      <span class="sf-nav-toggle-bar"></span>
+      <span class="sf-nav-toggle-bar"></span>
+    </button>
+    <nav class="sf-nav-links" id="nav-links" aria-label="Hotel sections">
+      <a href="#rooms">Rooms</a>
+      <a href="#amenities">Amenities</a>
+      <a href="#offers">Offers</a>
+      <a href="#dining">Dining</a>
+      <a href="#faq">FAQs</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <div class="sf-nav-actions">
+      <button type="button" class="sf-btn sf-btn-outline" data-chat-open>Chat with us</button>
+      <span id="nav-auth-area">
+        <button type="button" class="sf-btn sf-btn-sun" id="btn-login-open">Staff Login</button>
+      </span>
+    </div>
+  </header>
+
+  <main id="landing-main">
+    <!-- Loading state -->
+    <div id="state-loading" class="sf-state" aria-busy="true" aria-label="Loading hotel details">
+      <div class="sf-skeleton sf-skeleton-hero"></div>
+      <div class="sf-skeleton-row">
+        <div class="sf-skeleton sf-skeleton-card"></div>
+        <div class="sf-skeleton sf-skeleton-card"></div>
+        <div class="sf-skeleton sf-skeleton-card"></div>
+      </div>
+      <p class="sf-state-note">Loading hotel details…</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="state-error" class="sf-state" hidden>
+      <p class="sf-eyebrow sf-eyebrow-coral">Something went wrong</p>
+      <h1 class="sf-error-title">We could not load this hotel</h1>
+      <p id="error-text">The hotel details are unavailable right now. Please check the link and try again.</p>
+      <button type="button" class="sf-btn sf-btn-sun" id="btn-retry">Try again</button>
+    </div>
+
+    <!-- Loaded content -->
+    <div id="content" hidden>
+      <section class="sf-hero" id="hero" aria-label="Hotel overview">
+        <div class="sf-hero-inner">
+          <div class="sf-hero-copy">
+            <p class="sf-eyebrow" id="hero-city"></p>
+            <h1 class="sf-hero-name" id="hero-name"></h1>
+            <p class="sf-hero-desc" id="hero-desc"></p>
+            <div class="sf-hero-chips" id="hero-chips"></div>
+            <div class="sf-hero-ctas">
+              <a class="sf-btn sf-btn-sun sf-btn-lg" href="#rooms">View Rooms</a>
+              <button type="button" class="sf-btn sf-btn-ink sf-btn-lg" data-chat-open>Chat with Concierge</button>
+            </div>
+            <p class="sf-hero-guest-note">Guests need no account — browse rooms freely and chat with the concierge to book.</p>
+          </div>
+          <figure class="sf-hero-media">
+            <img id="hero-img" alt="The hotel — pool and terrace at golden hour" loading="eager">
+            <div class="sf-hero-media-fallback" id="hero-img-fallback" hidden></div>
+          </figure>
+        </div>
+      </section>
+
+      <section class="sf-features" id="features" aria-label="Included with your stay">
+        <div class="sf-features-row" id="features-row"></div>
+      </section>
+
+      <section class="sf-section" id="about" aria-label="About the hotel">
+        <p class="sf-eyebrow">Welcome in</p>
+        <h2 class="sf-h2">A little about us.</h2>
+        <p class="sf-lead" id="about-text"></p>
+      </section>
+
+      <section class="sf-section sf-section-mist" id="rooms" aria-label="Rooms and rates">
+        <p class="sf-eyebrow">Sleep well. Pay fair.</p>
+        <h2 class="sf-h2">Find your room.</h2>
+        <p class="sf-lead">Real rooms and real prices, straight from the hotel. Chat with the concierge to check your dates and book.</p>
+        <div class="sf-grid sf-grid-rooms" id="rooms-grid"></div>
+      </section>
+
+      <section class="sf-section" id="amenities" aria-label="Amenities and services">
+        <p class="sf-eyebrow sf-eyebrow-teal">More than a bed</p>
+        <h2 class="sf-h2">Everything taken care of.</h2>
+        <div class="sf-grid" id="services-grid"></div>
+      </section>
+
+      <section class="sf-section" id="offers" aria-label="Current offers">
+        <p class="sf-eyebrow sf-eyebrow-coral">Little extras</p>
+        <h2 class="sf-h2">Current offers.</h2>
+        <div id="offers-list"></div>
+      </section>
+
+      <section class="sf-section sf-section-mist" id="dining" aria-label="Dining">
+        <p class="sf-eyebrow sf-eyebrow-teal">Good food</p>
+        <h2 class="sf-h2">From our kitchen.</h2>
+        <div class="sf-grid" id="menu-grid"></div>
+      </section>
+
+      <section class="sf-section" id="contact" aria-label="Location, policies and contact">
+        <p class="sf-eyebrow">Find us</p>
+        <h2 class="sf-h2">Location &amp; contact.</h2>
+        <div class="sf-contact-grid">
+          <address class="sf-contact-card" id="contact-block"></address>
+          <div class="sf-policies" id="policies-list"></div>
+        </div>
+      </section>
+
+      <section class="sf-section" id="faq" aria-label="Frequently asked questions">
+        <p class="sf-eyebrow sf-eyebrow-teal">Before you ask</p>
+        <h2 class="sf-h2">Good to know.</h2>
+        <div id="faq-list"></div>
+      </section>
+
+      <section class="sf-cta-band" aria-label="Start your stay">
+        <h2 class="sf-cta-title">Your stay starts here.</h2>
+        <p>Ask the concierge anything — rooms, rates, dinner, or a late check-out.</p>
+        <div class="sf-hero-ctas">
+          <button type="button" class="sf-btn sf-btn-ink sf-btn-lg" data-chat-open>Chat with Concierge</button>
+          <a class="sf-btn sf-btn-paper sf-btn-lg" href="#rooms">View Rooms</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="sf-footer">
+    <p class="sf-footer-name"><span id="footer-hotel-name">StayFlow Hotel</span></p>
+    <nav class="sf-footer-links" aria-label="Footer">
+      <a href="#rooms">Rooms</a>
+      <a href="#offers">Offers</a>
+      <a href="#dining">Dining</a>
+      <a href="#faq">FAQs</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <p class="sf-footer-powered">Powered by StayFlow AI</p>
+  </footer>
+
+  <!-- Role-based staff login -->
+  <div class="sf-modal-backdrop" id="login-modal" hidden>
+    <div class="sf-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <button type="button" class="sf-modal-close" id="btn-login-close" aria-label="Close login">&times;</button>
+      <h2 id="login-title">Staff sign-in</h2>
+      <p class="sf-modal-sub">Sign in with your staff account. What you can access depends on your role.</p>
+
+      <form id="login-form" novalidate>
+        <div class="sf-field">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" required>
+        </div>
+        <div class="sf-field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p class="sf-form-error" id="login-error" role="alert" hidden></p>
+        <button type="submit" class="sf-btn sf-btn-teal sf-btn-block" id="btn-login-submit">Sign in</button>
+      </form>
+
+      <div class="sf-role-panel" id="role-panel" hidden>
+        <p class="sf-role-welcome" id="role-welcome"></p>
+        <p class="sf-role-note" id="role-note"></p>
+        <button type="button" class="sf-btn sf-btn-sun sf-btn-block" id="btn-open-dashboard">Open Dashboard</button>
+        <button type="button" class="sf-btn sf-btn-link" id="btn-cancel-redirect">Stay on this page</button>
+      </div>
+
+      <hr class="sf-modal-rule">
+      <div class="sf-guest-path">
+        <p><strong>I&rsquo;m a Guest</strong> — no account needed.</p>
+        <button type="button" class="sf-btn sf-btn-outline-dark" id="btn-guest-chat">Chat with the concierge</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/landing/app.js"></script>
+</body>
+</html>

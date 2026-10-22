@@ -8,6 +8,8 @@ from app.models.guest import Guest
 from app.models.hotel import Hotel
 from app.models.hotel_room import HotelRoom
 from app.models.hotel_user import HotelUser
+from app.models.integration import IntegrationIdempotencyKey, IntegrationRequestLog
+from app.models.integration_nonce import IntegrationNonce
 from app.models.knowledge import HotelDocument, HotelDocumentChunk
 from app.models.menu_item import MenuItem
 from app.models.message import Message
@@ -35,6 +37,9 @@ __all__ = [
     "HotelDocumentChunk",
     "HotelRoom",
     "HotelUser",
+    "IntegrationIdempotencyKey",
+    "IntegrationNonce",
+    "IntegrationRequestLog",
     "MenuItem",
     "Message",
     "NegotiationRule",

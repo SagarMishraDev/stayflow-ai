@@ -119,6 +119,16 @@ export const hotelSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional().or(z.literal("")),
   city: z.string().min(1, "City is required"),
+  check_in_time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour)")
+    .optional()
+    .or(z.literal("")),
+  check_out_time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour)")
+    .optional()
+    .or(z.literal("")),
   address: z.string().optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),
   email: z.string().email("Enter a valid email").optional().or(z.literal("")),
@@ -240,6 +250,19 @@ export const hotelRoomSchema = z.object({
   is_active: z.boolean().default(true),
 });
 export type HotelRoomForm = z.input<typeof hotelRoomSchema>;
+
+/** Backend: OrderUpdate.status must be one of ORDER_STATUSES (schemas/order.py). */
+export const orderUpdateSchema = z.object({
+  status: z.enum([
+    "PENDING",
+    "CONFIRMED",
+    "PREPARING",
+    "READY",
+    "DELIVERED",
+    "CANCELLED",
+  ]),
+});
+export type OrderUpdateForm = z.input<typeof orderUpdateSchema>;
 
 export const serviceRequestUpdateSchema = z.object({
   room_number: z.string().max(50).optional().or(z.literal("")),

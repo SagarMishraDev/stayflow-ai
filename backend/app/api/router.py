@@ -2403,7 +2403,6 @@ def agent_chat(
             hotel_id=payload.hotel_id,
             message=payload.message,
             conversation_id=payload.conversation_id,
-            conversation_token=payload.conversation_token,
             guest_id=payload.guest_id,
             channel=payload.channel,
             config=config,
@@ -2423,7 +2422,6 @@ def agent_chat(
     return ChatResponse(
         reply=result.reply,
         conversation_id=result.conversation_id,
-        conversation_token=result.conversation_token,
         iterations=result.iterations,
         degraded=result.degraded,
         tool_trace=[ToolTraceResponse(**entry.__dict__) for entry in result.tool_trace],

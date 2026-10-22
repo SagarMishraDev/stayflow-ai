@@ -15,6 +15,9 @@ export interface Hotel {
   timezone: string;
   currency: string;
   is_active: boolean;
+  public_id: string | null;
+  check_in_time: string | null;
+  check_out_time: string | null;
 }
 
 export interface HotelUser {
@@ -175,6 +178,39 @@ export interface AvailabilityNight {
   available: number;
 }
 
+export type OrderStatus =
+  | "PENDING"
+  | "CONFIRMED"
+  | "PREPARING"
+  | "READY"
+  | "DELIVERED"
+  | "CANCELLED";
+
+export type OrderType = "DINE_IN" | "ROOM_SERVICE" | "TAKEAWAY";
+
+export interface Order {
+  id: number;
+  hotel_id: number;
+  guest_id: number;
+  room_id: number | null;
+  order_type: OrderType;
+  table_number: number | null;
+  status: OrderStatus;
+  total_amount: string; // Decimal serialized as string
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface OrderItem {
+  id: number;
+  order_id: number;
+  menu_item_id: number;
+  quantity: number;
+  unit_price: string; // Decimal serialized as string
+  customization: string | null;
+  subtotal: string; // Decimal serialized as string
+}
+
 export interface MenuItem {
   id: number;
   hotel_id: number;
@@ -268,6 +304,28 @@ export interface KnowledgeDocument {
   status: string; // "processing" | "ready" | "failed"
   error: string | null;
   created_at: string;
+}
+
+/** Mirrors IntegrationSettingsResponse in backend/app/api/integrations.py.
+ * Secrets are never included — only presence flags and a fingerprint. */
+export interface IntegrationSettings {
+  hotel_id: number;
+  public_id: string;
+  has_integration_secret: boolean;
+  integration_secret_fingerprint: string | null;
+  integration_configured: boolean;
+  integration_webhook_url: string | null;
+  has_webhook_secret: boolean;
+  widget_base_url: string;
+}
+
+export interface SecretRotateResponse {
+  integration_secret: string;
+  integration_secret_fingerprint: string;
+}
+
+export interface WebhookSecretRotateResponse {
+  integration_webhook_secret: string;
 }
 
 export interface TokenPayload {

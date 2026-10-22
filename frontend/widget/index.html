@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StayFlow Widget — demo &amp; test page</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; margin: 0; background: #f8f1e6; color: #2b2430; }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 20px 120px; }
+    h1 { font-size: 28px; margin-bottom: 4px; }
+    code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    pre { background: #2b2430; color: #f6d9a8; padding: 16px; border-radius: 12px; overflow-x: auto; font-size: 13px; }
+    form { display: flex; gap: 8px; flex-wrap: wrap; margin: 20px 0; }
+    input { flex: 1; min-width: 260px; padding: 10px 14px; border: 1px solid #d8c9ae; border-radius: 10px; font-size: 14px; }
+    button { padding: 10px 18px; border: 0; border-radius: 10px; background: #4e2445; color: #fff; font-weight: 600; cursor: pointer; }
+    .note { background: #fff; border: 1px solid #e7dcc9; border-radius: 12px; padding: 14px 16px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>StayFlow widget — demo &amp; test page</h1>
+    <p>This page stands in for a hotel's own website. Paste the hotel's
+       <strong>public id</strong> (Staff dashboard → Hotel settings →
+       Integrations) and load the widget exactly the way a real site would.</p>
+
+    <form id="demo-form">
+      <label for="public-id" style="position:absolute;left:-9999px">Hotel public id</label>
+      <input id="public-id" type="text" placeholder="Hotel public_id (32-char hex)" autocomplete="off">
+      <button type="submit">Load widget</button>
+    </form>
+
+    <div class="note" id="demo-note">
+      The embed snippet a hotel pastes into its website is:
+      <pre>&lt;script src="https://YOUR_HOSTED_DOMAIN/widget.js"
+        data-hotel-id="HOTEL_PUBLIC_ID" async&gt;&lt;/script&gt;</pre>
+      Once loaded, the 💬 launcher appears at the bottom-right of this page.
+    </div>
+  </main>
+
+  <script>
+    "use strict";
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var input = document.getElementById("public-id");
+      var form = document.getElementById("demo-form");
+
+      function loadWidget(publicId) {
+        var s = document.createElement("script");
+        s.src = window.location.origin + "/widget.js";
+        s.async = true;
+        s.setAttribute("data-hotel-id", publicId);
+        document.body.appendChild(s);
+      }
+
+      var fromQuery = params.get("hotel");
+      if (fromQuery) {
+        input.value = fromQuery;
+        loadWidget(fromQuery);
+      }
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var id = input.value.trim();
+        if (!id) return;
+        // Reload with ?hotel=<id> so the loader runs fresh, like a real page view.
+        window.location.search = "?hotel=" + encodeURIComponent(id);
+      });
+    })();
+  </script>
+</body>
+</html>

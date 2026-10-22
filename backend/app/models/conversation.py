@@ -10,16 +10,9 @@ class Conversation(Base):
     __tablename__ = "conversations"
     # Matches ix_conversations_guest created by migration f1a2b3c4d5e6 so
     # that `alembic check` (metadata vs database) stays green.
-    __table_args__ = (
-        Index("ix_conversations_guest", "guest_id"),
-        Index("ix_conversations_access_token", "access_token", unique=True),
-    )
+    __table_args__ = (Index("ix_conversations_guest", "guest_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-
-    # Opaque capability used by the public web chat to continue an anonymous
-    # conversation without exposing a guessable conversation id.
-    access_token: Mapped[str] = mapped_column(String(64), nullable=False)
 
     hotel_id: Mapped[int] = mapped_column(
         ForeignKey("hotels.id"),

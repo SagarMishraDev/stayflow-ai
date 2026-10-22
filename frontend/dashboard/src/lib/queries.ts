@@ -19,13 +19,18 @@ import type {
   Hotel,
   HotelRoom,
   HotelUser,
+  IntegrationSettings,
   KnowledgeDocument,
   MenuItem,
   NegotiationEvaluation,
   NegotiationRule,
   Notification,
   Offer,
+  Order,
+  OrderItem,
   Policy,
+  SecretRotateResponse,
+  WebhookSecretRotateResponse,
   Rate,
   Room,
   Service,
@@ -156,6 +161,8 @@ export const qk = {
   guests: (hotelId: number | null) => ["guests", hotelId ?? "all"],
   bookings: (hotelId: number | null) => ["bookings", hotelId ?? "all"],
   menuItems: (hotelId: number | null) => ["menu-items", hotelId ?? "all"],
+  orders: (hotelId: number | null) => ["orders", hotelId ?? "all"],
+  orderItems: (orderId: number | null) => ["order-items", orderId ?? "none"],
   hotelRooms: (hotelId: number | null) => ["hotel-rooms", hotelId ?? "all"],
   serviceRequests: (hotelId: number | null) => [
     "service-requests",
@@ -324,6 +331,22 @@ export function useMenuItems(hotelId: number | null) {
   });
 }
 
+export function useOrders(hotelId: number | null, guestId?: number | null) {
+  return useList<Order>([...qk.orders(hotelId), guestId ?? "all"], "/orders", {
+    hotel_id: hotelId ?? undefined,
+    guest_id: guestId ?? undefined,
+  });
+}
+
+export function useOrderItems(orderId: number | null) {
+  return useList<OrderItem>(
+    qk.orderItems(orderId),
+    orderId ? "/order-items" : "",
+    { order_id: orderId ?? undefined },
+    { enabled: orderId !== null },
+  );
+}
+
 export function useHotelRooms(hotelId: number | null) {
   return useList<HotelRoom>(qk.hotelRooms(hotelId), "/hotel-rooms", {
     hotel_id: hotelId ?? undefined,
@@ -413,4 +436,39 @@ export function useUploadDocument(hotelId: number | null) {
 }
 export function useDeleteDocument(hotelId: number | null) {
   return useRemove((id) => `/knowledge/documents/${id}`, [qk.documents(hotelId)]);
+}
+
+/* ------------------------- Integrations (§11/§12) ------------------------- */
+
+export const integrationSettingsKey = ["integration-settings"] as (string | number)[];
+
+export function useIntegrationSettings() {
+  return useDetail<IntegrationSettings>(
+    [...integrationSettingsKey],
+    "/integrations/settings",
+  );
+}
+
+/** Rotate the per-hotel integration secret. The response carries the new
+ * secret exactly once — the caller must show it immediately. */
+export function useRotateIntegrationSecret() {
+  return useApiMutation<SecretRotateResponse, void>(
+    async () => (await api.post<SecretRotateResponse>("/integrations/secret/rotate")).data,
+    { invalidate: [integrationSettingsKey] },
+  );
+}
+
+export function useRotateWebhookSecret() {
+  return useApiMutation<WebhookSecretRotateResponse, void>(
+    async () =>
+      (await api.post<WebhookSecretRotateResponse>("/integrations/webhook-secret/rotate")).data,
+    { invalidate: [integrationSettingsKey] },
+  );
+}
+
+export function useUpdateIntegrationWebhook() {
+  return useApiMutation<IntegrationSettings, { webhook_url: string | null }>(
+    async (input) => (await api.patch<IntegrationSettings>("/integrations/webhook", input)).data,
+    { invalidate: [integrationSettingsKey] },
+  );
 }

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hotel chat</title>
+  <link rel="stylesheet" href="widget.css">
+</head>
+<body class="sfw-chat">
+  <!-- StayFlow widget chat page. Loaded in an iframe by widget.js.
+       Query params: ?hotel=<public_id>&api=<api origin>.
+       Talks ONLY to the public widget API:
+         GET  {api}/api/v1/public/hotels/{public_id}/widget-config
+         POST {api}/api/v1/public/chat  {hotel_public_id, message, session_id}
+       The session id (our conversation id) persists in localStorage,
+       scoped per hotel public_id. No staff credentials are used. -->
+  <header class="sfw-chat-header">
+    <h1 id="sfw-hotel-name">Chat</h1>
+    <p id="sfw-hotel-sub">Ask about rooms, rates, the menu, or services.</p>
+  </header>
+  <div class="sfw-status" id="sfw-status" role="status">Connecting…</div>
+  <main class="sfw-messages" id="sfw-messages" aria-live="polite"></main>
+  <div class="sfw-error" id="sfw-error" hidden>
+    <span id="sfw-error-text"></span>
+    <button type="button" id="sfw-retry">Retry</button>
+  </div>
+  <form class="sfw-composer" id="sfw-form">
+    <label class="sfw-sr" for="sfw-input" style="position:absolute;left:-9999px">Your message</label>
+    <input id="sfw-input" type="text" maxlength="4000" placeholder="Type your message…" autocomplete="off">
+    <button type="submit" id="sfw-send">Send</button>
+  </form>
+
+  <script>
+    "use strict";
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var publicId = params.get("hotel") || "";
+      var apiBase = (params.get("api") || window.location.origin).replace(/\/+$/, "");
+      var sessionKey = "stayflow_widget_session_" + publicId;
+
+      var nameEl = document.getElementById("sfw-hotel-name");
+      var subEl = document.getElementById("sfw-hotel-sub");
+      var statusEl = document.getElementById("sfw-status");
+      var messagesEl = document.getElementById("sfw-messages");
+      var errorEl = document.getElementById("sfw-error");
+      var errorText = document.getElementById("sfw-error-text");
+      var form = document.getElementById("sfw-form");
+      var input = document.getElementById("sfw-input");
+      var sendBtn = document.getElementById("sfw-send");
+      var retryBtn = document.getElementById("sfw-retry");
+
+      var sending = false;
+      var lastFailed = null;
+
+      function setStatus(text, state) {
+        statusEl.textContent = text;
+        statusEl.dataset.state = state || "ok";
+      }
+      function addMessage(text, who) {
+        var div = document.createElement("div");
+        div.className = "sfw-msg sfw-msg-" + who;
+        div.textContent = text;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return div;
+      }
+      function showError(text, failedMessage) {
+        errorText.textContent = text;
+        errorEl.hidden = false;
+        lastFailed = failedMessage || null;
+        retryBtn.style.display = lastFailed ? "" : "none";
+      }
+      function hideError() { errorEl.hidden = true; lastFailed = null; }
+
+      // Load hotel branding + welcome message (public config only).
+      fetch(apiBase + "/api/v1/public/hotels/" + encodeURIComponent(publicId) + "/widget-config")
+        .then(function (r) {
+          if (!r.ok) throw new Error("config");
+          return r.json();
+        })
+        .then(function (cfg) {
+          nameEl.textContent = cfg.widget_title || cfg.name || "Chat";
+          if (cfg.check_in_time || cfg.check_out_time) {
+            subEl.textContent =
+              "Check-in " + (cfg.check_in_time || "—") +
+              " · Check-out " + (cfg.check_out_time || "—");
+          }
+          setStatus("Connected", "ok");
+          addMessage(cfg.welcome_message || "Welcome! How can I help?", "agent");
+        })
+        .catch(function () {
+          setStatus("We could not load this hotel's chat.", "error");
+          showError("Chat is unavailable for this hotel right now.", null);
+        });
+
+      function send(text) {
+        if (sending || !text.trim()) return;
+        hideError();
+        sending = true;
+        sendBtn.disabled = true;
+        addMessage(text, "guest");
+        var typing = document.createElement("div");
+        typing.className = "sfw-typing";
+        typing.textContent = "Typing…";
+        messagesEl.appendChild(typing);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        var sessionId = null;
+        try { sessionId = window.localStorage.getItem(sessionKey); } catch (e) {}
+
+        fetch(apiBase + "/api/v1/public/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            hotel_public_id: publicId,
+            message: text,
+            session_id: sessionId
+          })
+        })
+          .then(function (r) {
+            return r.json().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
+          })
+          .then(function (res) {
+            typing.remove();
+            if (!res.ok) {
+              if (res.status === 429) {
+                showError("You're sending messages too quickly — please wait a moment and retry.", text);
+              } else {
+                showError("Something went wrong sending that. Please retry.", text);
+              }
+              return;
+            }
+            try { window.localStorage.setItem(sessionKey, res.body.session_id); } catch (e) {}
+            addMessage(res.body.reply || "…", "agent");
+          })
+          .catch(function () {
+            typing.remove();
+            showError("Network error — check your connection and retry.", text);
+          })
+          .finally(function () {
+            sending = false;
+            sendBtn.disabled = false;
+            input.focus();
+          });
+      }
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var text = input.value;
+        input.value = "";
+        send(text);
+      });
+      retryBtn.addEventListener("click", function () {
+        if (lastFailed) send(lastFailed);
+      });
+    })();
+  </script>
+</body>
+</html>

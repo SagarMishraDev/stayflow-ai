@@ -9,6 +9,10 @@ const STYLES: Record<string, string> = {
   ACKNOWLEDGED: "bg-pine-100 text-pine-950 border border-pine-700/30",
   IN_PROGRESS: "bg-brass-100 text-ink border border-brass-500/40",
   COMPLETED: "bg-pine-700 text-white",
+  // food orders
+  PREPARING: "bg-brass-100 text-ink border border-brass-500/40",
+  READY: "bg-pine-100 text-pine-950 border border-pine-700/30",
+  DELIVERED: "bg-pine-700 text-white",
   // documents
   processing: "bg-brass-100 text-ink border border-brass-500/40",
   ready: "bg-pine-700 text-white",

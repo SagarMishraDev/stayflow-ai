@@ -7,10 +7,14 @@ import {
   useCreate,
   useFaqs,
   useHotel,
+  useIntegrationSettings,
   useOffers,
   usePolicies,
   useRemove,
+  useRotateIntegrationSecret,
+  useRotateWebhookSecret,
   useUpdate,
+  useUpdateIntegrationWebhook,
 } from "../lib/queries";
 import { apiErrorMessage } from "../lib/api";
 import {
@@ -28,7 +32,7 @@ import { Field, FormError, Modal, TextInput } from "../components/Form";
 import type { Faq, Offer, Policy } from "../lib/types";
 import { policySchema, type PolicyForm } from "../lib/schemas";
 
-type Tab = "profile" | "policies" | "faqs" | "offers";
+type Tab = "profile" | "policies" | "faqs" | "offers" | "integrations";
 
 export default function Settings() {
   const { hotelId } = useAuth();
@@ -39,6 +43,7 @@ export default function Settings() {
     { id: "policies", label: "Policies" },
     { id: "faqs", label: "FAQs" },
     { id: "offers", label: "Offers" },
+    { id: "integrations", label: "Integrations" },
   ];
 
   return (
@@ -70,6 +75,7 @@ export default function Settings() {
       {tab === "policies" && hotelId && <PoliciesSection hotelId={hotelId} />}
       {tab === "faqs" && hotelId && <FaqsSection hotelId={hotelId} />}
       {tab === "offers" && hotelId && <OffersSection hotelId={hotelId} />}
+      {tab === "integrations" && <IntegrationsSection />}
     </div>
   );
 }
@@ -126,6 +132,8 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
           address: keep(values.address, hotel.address),
           phone: keep(values.phone, hotel.phone),
           email: keep(values.email, hotel.email),
+          check_in_time: keep(values.check_in_time, hotel.check_in_time),
+          check_out_time: keep(values.check_out_time, hotel.check_out_time),
           timezone: values.timezone?.trim() || hotel.timezone,
           currency: values.currency?.trim() || hotel.currency,
           is_active: values.is_active ?? hotel.is_active,
@@ -164,6 +172,14 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
         </Field>
         <Field label="Email" htmlFor="h-email" error={errors.email?.message}>
           <TextInput id="h-email" name="email" register={register} type="email" placeholder={hotel.email ?? ""} />
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Check-in time (HH:MM)" htmlFor="h-ci" error={errors.check_in_time?.message}>
+          <TextInput id="h-ci" name="check_in_time" register={register} placeholder={hotel.check_in_time ?? "14:00"} />
+        </Field>
+        <Field label="Check-out time (HH:MM)" htmlFor="h-co" error={errors.check_out_time?.message}>
+          <TextInput id="h-co" name="check_out_time" register={register} placeholder={hotel.check_out_time ?? "11:00"} />
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -667,5 +683,194 @@ function OfferModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/* ---------------------------- Integrations ---------------------------- */
+
+function IntegrationsSection() {
+  const settingsQuery = useIntegrationSettings();
+  const rotateSecret = useRotateIntegrationSecret();
+  const rotateWebhookSecret = useRotateWebhookSecret();
+  const updateWebhook = useUpdateIntegrationWebhook();
+  const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [newWebhookSecret, setNewWebhookSecret] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  if (settingsQuery.isLoading) {
+    return (
+      <div aria-busy="true" className="panel max-w-2xl space-y-3 p-6" aria-label="Loading integration settings">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-10 animate-pulse rounded bg-pine-950/10" />
+        ))}
+        <span className="sr-only">Loading integration settings…</span>
+      </div>
+    );
+  }
+  if (settingsQuery.isError || !settingsQuery.data) {
+    return (
+      <div role="alert" className="panel max-w-2xl p-6 text-center">
+        <p className="font-semibold">Couldn't load integration settings</p>
+        <p className="mt-1 text-sm text-ink/70">{apiErrorMessage(settingsQuery.error)}</p>
+        <button type="button" className="btn btn-secondary mt-4" onClick={() => settingsQuery.refetch()}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const s = settingsQuery.data;
+  const base = (s.widget_base_url || window.location.origin).replace(/\/+$/, "");
+  const snippet = `<script src="${base}/widget.js" data-hotel-id="${s.public_id}" async></script>`;
+  const demoUrl = `${base}/widget/?hotel=${s.public_id}`;
+  const urlValue = webhookUrl ?? s.integration_webhook_url ?? "";
+
+  async function copy(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+    } catch {
+      setCopied(null);
+    }
+  }
+
+  async function onRotateSecret() {
+    if (!window.confirm("Generate a new integration secret? The current secret stops working immediately.")) return;
+    setActionError(null);
+    try {
+      const res = await rotateSecret.mutateAsync();
+      setNewSecret(res.integration_secret);
+    } catch (e) {
+      setActionError(apiErrorMessage(e));
+    }
+  }
+
+  async function onRotateWebhookSecret() {
+    if (!window.confirm("Generate a new webhook signing secret? Update your webhook receiver with the new value.")) return;
+    setActionError(null);
+    try {
+      const res = await rotateWebhookSecret.mutateAsync();
+      setNewWebhookSecret(res.integration_webhook_secret);
+    } catch (e) {
+      setActionError(apiErrorMessage(e));
+    }
+  }
+
+  async function onSaveWebhook() {
+    setActionError(null);
+    try {
+      await updateWebhook.mutateAsync({ webhook_url: urlValue.trim() || null });
+    } catch (e) {
+      setActionError(apiErrorMessage(e));
+    }
+  }
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <FormError error={actionError} />
+
+      <section className="panel space-y-3 p-6" aria-label="Website widget">
+        <h2 className="panel-title">Website chat widget</h2>
+        <p className="text-sm text-ink/70">
+          Embed the guest chat on your hotel website. The public id below is
+          safe to share — it is not your internal hotel id, and the widget
+          never exposes staff data.
+        </p>
+        <div>
+          <p className="label">Hotel public id</p>
+          <p className="flex items-center gap-2">
+            <code className="rounded bg-pine-950/5 px-2 py-1 font-mono text-sm">{s.public_id}</code>
+            <button type="button" className="text-sm font-medium text-pine-700 underline" onClick={() => copy(s.public_id, "public id")}>
+              Copy
+            </button>
+          </p>
+        </div>
+        <div>
+          <p className="label">Embed snippet</p>
+          <pre className="overflow-x-auto rounded-lg bg-pine-950 p-3 font-mono text-xs text-white">{snippet}</pre>
+          <button type="button" className="mt-2 text-sm font-medium text-pine-700 underline" onClick={() => copy(snippet, "snippet")}>
+            Copy snippet
+          </button>{" "}
+          <a className="text-sm font-medium text-pine-700 underline" href={demoUrl} target="_blank" rel="noreferrer">
+            Open the widget demo page
+          </a>
+          {copied && (
+            <span role="status" className="ml-2 text-sm text-ink/60">Copied {copied}.</span>
+          )}
+        </div>
+      </section>
+
+      <section className="panel space-y-3 p-6" aria-label="Integration API">
+        <h2 className="panel-title">Existing-chat integration API</h2>
+        <p className="text-sm text-ink/70">
+          Connect an existing website chat with signed server-to-server calls
+          to <code className="font-mono text-xs">POST /api/v1/integrations/chat/message</code>{" "}
+          (HMAC-SHA256; see <span className="font-mono text-xs">docs/INTEGRATIONS.md</span> in the
+          repository). Secrets are shown exactly once, when generated — they
+          are never displayed again.
+        </p>
+        <p className="text-sm">
+          Integration secret:{" "}
+          <strong>{s.has_integration_secret ? "configured" : "not generated"}</strong>
+          {s.integration_secret_fingerprint && (
+            <span className="ml-2 font-mono text-xs text-ink/60">
+              fingerprint {s.integration_secret_fingerprint}
+            </span>
+          )}
+          {!s.has_integration_secret && s.integration_configured && (
+            <span className="ml-2 text-ink/60">(a global fallback secret is configured)</span>
+          )}
+        </p>
+        {newSecret && (
+          <div role="alert" className="rounded-lg border border-brass-500/60 bg-brass-100/40 p-3 text-sm">
+            <p className="font-semibold">New integration secret — copy it now, it will not be shown again:</p>
+            <code className="mt-1 block break-all font-mono text-xs">{newSecret}</code>
+            <button type="button" className="mt-2 font-medium text-pine-700 underline" onClick={() => copy(newSecret, "secret")}>
+              Copy secret
+            </button>{" "}
+            <button type="button" className="font-medium text-pine-700 underline" onClick={() => setNewSecret(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        <button type="button" className="btn btn-secondary" onClick={onRotateSecret} disabled={rotateSecret.isPending}>
+          {rotateSecret.isPending ? "Generating…" : s.has_integration_secret ? "Rotate secret" : "Generate secret"}
+        </button>
+
+        <div className="border-t border-pine-950/10 pt-4">
+          <p className="label">Outbound webhook URL (optional, for async responses)</p>
+          <div className="flex gap-2">
+            <input
+              className="input"
+              type="url"
+              placeholder="https://your-site.example/stayflow/webhook"
+              value={urlValue}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+            />
+            <button type="button" className="btn btn-secondary shrink-0" onClick={onSaveWebhook} disabled={updateWebhook.isPending}>
+              {updateWebhook.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+          <p className="mt-2 text-sm">
+            Webhook signing secret:{" "}
+            <strong>{s.has_webhook_secret ? "configured" : "not generated"}</strong>
+          </p>
+          {newWebhookSecret && (
+            <div role="alert" className="mt-2 rounded-lg border border-brass-500/60 bg-brass-100/40 p-3 text-sm">
+              <p className="font-semibold">New webhook signing secret — copy it now:</p>
+              <code className="mt-1 block break-all font-mono text-xs">{newWebhookSecret}</code>
+              <button type="button" className="mt-2 font-medium text-pine-700 underline" onClick={() => setNewWebhookSecret(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          <button type="button" className="btn btn-secondary mt-2" onClick={onRotateWebhookSecret} disabled={rotateWebhookSecret.isPending}>
+            {rotateWebhookSecret.isPending ? "Generating…" : s.has_webhook_secret ? "Rotate webhook secret" : "Generate webhook secret"}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }

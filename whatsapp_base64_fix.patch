@@ -1,0 +1,50 @@
+--- /tmp/stayflow-fix/whatsapp.py.orig	2026-10-11 14:21:09.955731370 +0000
++++ /tmp/stayflow-fix/whatsapp.py	2026-10-11 14:21:10.102559829 +0000
+@@ -3,14 +3,10 @@
+ Validates Twilio's ``X-Twilio-Signature`` and sends replies through the Twilio
+ Messages REST API with plain ``httpx`` calls — no twilio SDK.
+ 
+-Signature algorithm (per spec): ``HMAC-SHA1`` keyed with ``TWILIO_AUTH_TOKEN``
+-over ``full_url + sorted POST params concatenated as key+value``. The hex
+-digest is compared with :func:`hmac.compare_digest`.
+-
+-.. note::
+-    Real Twilio signs with base64, not hex. This module implements the hex
+-    variant named by the project spec; if you point this at production Twilio
+-    webhooks, switch :func:`compute_twilio_signature` to base64.
++Signature algorithm: ``HMAC-SHA1`` keyed with ``TWILIO_AUTH_TOKEN``
++over ``full_url + sorted POST params concatenated as key+value``, base64-
++encoded (the format real Twilio sends in ``X-Twilio-Signature``) and
++compared with :func:`hmac.compare_digest`.
+ 
+ Sandbox quirk: unset proxy env vars (``NO_PROXY`` containing ``"[::1]"``
+ breaks httpx in some bot libraries), so every outbound call runs with proxy
+@@ -19,6 +15,7 @@
+ 
+ from __future__ import annotations
+ 
++import base64
+ import hashlib
+ import hmac
+ import logging
+@@ -54,13 +51,17 @@
+     url: str,
+     params: Mapping[str, str],
+ ) -> str:
+-    """Compute the expected ``X-Twilio-Signature`` hex digest for a request."""
++    """Compute the expected ``X-Twilio-Signature`` for a request.
++
++    Real Twilio sends this as base64-encoded HMAC-SHA1 (not hex).
++    """
+     data = url + "".join(f"{key}{params[key]}" for key in sorted(params))
+-    return hmac.new(
++    digest = hmac.new(
+         auth_token.encode("utf-8"),
+         data.encode("utf-8"),
+         hashlib.sha1,
+-    ).hexdigest()
++    ).digest()
++    return base64.b64encode(digest).decode("ascii")
+ 
+ 
+ def verify_twilio_signature(

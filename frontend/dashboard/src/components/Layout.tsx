@@ -12,6 +12,7 @@ const NAV: { to: string; label: string; roles?: ("staff" | "hotel_admin" | "supe
   { to: "/conversations", label: "Guest chats" },
   { to: "/guests", label: "Guests" },
   { to: "/menu", label: "Menu" },
+  { to: "/orders", label: "Food orders" },
   { to: "/services", label: "Hotel services" },
   { to: "/knowledge", label: "Knowledge base" },
   { to: "/notifications", label: "Notifications" },

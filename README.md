@@ -41,7 +41,12 @@ stayflow-ai/
 ├── frontend/                  # guest web chat (vanilla HTML/CSS/JS)
 │   ├── index.html
 │   ├── styles.css
-│   └── app.js                 # talks to POST /api/v1/agent/chat; served at /chat
+│   ├── app.js                 # talks to POST /api/v1/agent/chat; served at /chat
+│   └── widget/                # embeddable widget: widget.js loader, widget.css,
+│                              # chat.html (iframe UI), index.html (demo page)
+├── docs/
+│   ├── WIDGET.md              # §11 widget embedding + public API
+│   └── INTEGRATIONS.md        # §12 signed integration API + outbound webhooks
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            # FastAPI app: staff router, public webhooks,
@@ -56,7 +61,9 @@ stayflow-ai/
 │   │   │   └── tools/        # registry + hotel/booking/ops/knowledge tools
 │   │   ├── api/
 │   │   │   ├── router.py      # staff REST endpoints (JWT-protected) + agent chat
-│   │   │   └── webhooks.py    # public Telegram/WhatsApp guest webhooks
+│   │   │   ├── webhooks.py    # public Telegram/WhatsApp guest webhooks
+│   │   │   ├── public.py      # public widget API (hotels by public_id only)
+│   │   │   └── integrations.py # HMAC-signed chat integration API + staff settings
 │   │   ├── bots/
 │   │   │   ├── telegram.py    # Telegram Bot API client + update parsing
 │   │   │   └── whatsapp.py    # Twilio client + X-Twilio-Signature verification
@@ -438,20 +445,6 @@ background on **Redis + arq** (`backend/app/jobs/`):
   unit tests use). If Redis is unreachable in queue mode, the endpoint
   fails closed with **503** and marks the document `failed`.
 
-### Public web-chat session security
-
-The public `POST /api/v1/agent/chat` endpoint returns an opaque, random
-`conversation_token` alongside the numeric conversation id. The web chat stores
-that token in `sessionStorage` and sends it on subsequent turns. A caller who
-only guesses another conversation's integer id cannot continue or read that
-conversation without possessing the token. Telegram and WhatsApp continue to
-identify guests through their verified channel identities and use the same
-agent/business layer.
-
-For local dashboard development, Vite runs on `http://localhost:5173` and
-proxies `/api/*` to the FastAPI server on `http://127.0.0.1:8000`; the example
-backend CORS configuration is aligned with that origin.
-
 ### Agent safety rails
 
 - **No direct DB access from the LLM** — only the 18 registered tools.
@@ -510,6 +503,62 @@ is sent back through the same channel.
 
 ---
 
+## Embeddable widget & existing-chat integrations
+
+**Widget (§11).** Hotels embed the guest chat on their own website:
+
+```html
+<script src="https://YOUR_HOSTED_DOMAIN/widget.js" data-hotel-id="HOTEL_PUBLIC_ID" async></script>
+```
+
+`HOTEL_PUBLIC_ID` is the hotel's non-sequential `public_id` (staff
+dashboard → Hotel settings → Integrations; migration `c4d8e2a91b07`).
+The loader (vanilla JS, no build step) injects a launcher + iframe chat
+panel backed by the public API (`GET /api/v1/public/hotels/{public_id}`,
+`POST /api/v1/public/chat` — public-id only, rate-limited, same agent
+runner). Demo page: `http://localhost:8000/widget/?hotel=<PUBLIC_ID>`.
+Full guide: [docs/WIDGET.md](docs/WIDGET.md).
+
+**Integrations (§12).** An existing website chat can call
+`POST /api/v1/integrations/chat/message` server-to-server, authenticated
+by a per-hotel HMAC-SHA256 signature (`X-StayFlow-Timestamp` /
+`X-StayFlow-Signature` over `timestamp + "." + raw_body`), with a
+5-minute replay window, nonce replay protection, hotel-scoped
+idempotency keys, and optional signed outbound-webhook delivery of
+responses (bounded retries). Secrets are generated in the dashboard and
+shown exactly once. Full protocol: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+## Hotel landing page
+
+The public hotel landing page is served by the API at the site root —
+**`http://localhost:8000/`** (assets under `/landing/*`, sources in
+`frontend/landing/`). A visitor sees the hotel's real details — rooms
+with real nightly rates, amenities & services, current offers, dining /
+menu highlights, FAQs, policies (incl. cancellation) and contact —
+all loaded from one public, rate-limited aggregate endpoint:
+
+- `GET /api/v1/public/hotels/{public_id}/landing`
+- `GET /api/v1/public/featured-hotel/landing` — same payload for the
+  first active hotel (single-property/demo convenience)
+
+**Which hotel is shown:** `/?hotel=<public_id>` wins; otherwise the
+last hotel viewed in that browser; otherwise the featured hotel.
+Sections with no data are hidden — the page never invents prices,
+ratings, or amenities. The StayFlow chat widget is embedded on the page,
+so guests chat/book with no account.
+
+**Role-based staff login:** the landing page's *Staff Login* posts to
+the same `POST /api/v1/auth/login` as the dashboard and stores the
+session in the same localStorage keys (`stayflow_token`,
+`stayflow_hotel_id`), then shows a role panel — Super Admin → *Open
+Admin Dashboard*, Hotel Admin → *Open Hotel Dashboard*, Staff → *Open
+Staff Dashboard* — with a short, cancellable auto-redirect. The
+dashboard URL is resolved in this order: `window.STAYFLOW_DASHBOARD_URL`,
+then localStorage `stayflow_dashboard_url`, then the Vite dev default
+`http://localhost:5173/`. In a same-origin production deploy, set
+`stayflow_dashboard_url` (or serve the dashboard SPA under the same
+origin and point it there).
+
 ## Guest web frontend
 
 `frontend/` (vanilla HTML/CSS/JS) is a minimal chat UI that POSTs to
@@ -539,12 +588,18 @@ uv run uvicorn app.main:app --port 8000
 | Knowledge base | CRUD `/api/v1/knowledge/documents` (staff JWT, hotel-scoped; ingestion runs in the arq worker, `POST` answers 202); the agent reads through the `search_hotel_knowledge` tool |
 | Conversations | `POST /api/v1/conversations`, message post/list |
 | Agent | `POST /api/v1/agent/chat` |
+| Widget (public) | `GET /api/v1/public/hotels/{public_id}`, `GET /api/v1/public/hotels/{public_id}/widget-config`, `POST /api/v1/public/chat` (public-id only, rate-limited) |
+| Integrations | `POST /api/v1/integrations/chat/message` (HMAC-signed, idempotent); staff settings `GET /api/v1/integrations/settings`, `POST /api/v1/integrations/secret/rotate`, `POST /api/v1/integrations/webhook-secret/rotate`, `PATCH /api/v1/integrations/webhook` |
+| Orders (dashboard) | Staff CRUD `/api/v1/orders` + `/api/v1/order-items`; dashboard page at `/orders` |
 | Webhooks (public) | `POST /api/v1/webhooks/telegram/{hotel_id}`, `POST /api/v1/webhooks/whatsapp/{hotel_id}` |
 | System | `GET /api/v1/audit-logs`, `GET /api/v1/notifications`, `PATCH /api/v1/notifications/{id}/read` |
 
 Only `/health`, `POST /api/v1/agent/chat`, and the two webhook routes are
-reachable without a staff JWT; every other route requires a valid token and
-enforces hotel-level tenant isolation.
+reachable without a staff JWT; the widget API (`/api/v1/public/*`) uses
+hotel `public_id` resolution with rate limiting, and the integration chat
+API uses per-hotel HMAC signatures — neither accepts a staff JWT. Every
+other route requires a valid token and enforces hotel-level tenant
+isolation.
 
 ---
 
@@ -589,6 +644,12 @@ Every setting the code reads (see `backend/app/core/config.py`) is listed in
 | `RATE_LIMIT_CHAT_PER_MINUTE` / `RATE_LIMIT_CHAT_WINDOW_SECONDS` | `20` / `60` | `POST /api/v1/agent/chat` budget, keyed by `guest_id` (IP fallback) |
 | `RATE_LIMIT_WEBHOOK_PER_MINUTE` / `RATE_LIMIT_WEBHOOK_WINDOW_SECONDS` | `30` / `60` | Telegram/WhatsApp webhook budget, keyed by sender identity (IP fallback) |
 | `RATE_LIMIT_LOGIN_PER_MINUTE` / `RATE_LIMIT_LOGIN_WINDOW_SECONDS` | `5` / `60` | `POST /api/v1/auth/login` budget, keyed by client IP + email |
+| `WIDGET_BASE_URL` | *(empty = same origin)* | Base URL for widget assets, used in the dashboard embed snippet |
+| `RATE_LIMIT_PUBLIC_CHAT_PER_MINUTE` / `..._WINDOW_SECONDS` | `20` / `60` | `POST /api/v1/public/chat` budget, per hotel public_id + client IP |
+| `RATE_LIMIT_INTEGRATION_PER_MINUTE` / `..._WINDOW_SECONDS` | `60` / `60` | Integration chat budget, per hotel public_id + client IP |
+| `INTEGRATION_TIMESTAMP_WINDOW_SECONDS` | `300` | HMAC timestamp replay window for integration requests |
+| `INTEGRATION_FALLBACK_SECRET` | *(unset)* | Optional global fallback integration signing secret (per-hotel secrets take precedence) |
+| `INTEGRATION_HTTP_TIMEOUT_SECONDS` / `INTEGRATION_MAX_RETRIES` | `5` / `3` | Outbound webhook delivery timeout per attempt / total attempts |
 
 ### Production secrets checklist
 

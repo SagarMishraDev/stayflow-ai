@@ -122,6 +122,27 @@ class Settings(BaseSettings):
     rate_limit_login_per_minute: int = 5
     rate_limit_login_window_seconds: int = 60
 
+    # --- Embeddable widget + integration API (Master Prompt §11/§12) --------
+    # Base URL where the widget assets are served (used to build the embed
+    # snippet shown in the staff dashboard). Empty means "same origin as the
+    # API", which is how the FastAPI app serves /widget.js itself.
+    widget_base_url: str = ""
+    # Public widget chat budget: per hotel public_id + client IP.
+    rate_limit_public_chat_per_minute: int = 20
+    rate_limit_public_chat_window_seconds: int = 60
+    # Integration API budget: per hotel public_id + client IP.
+    rate_limit_integration_per_minute: int = 60
+    rate_limit_integration_window_seconds: int = 60
+    # HMAC timestamp replay window for integration requests (seconds).
+    integration_timestamp_window_seconds: int = 300
+    # Optional global fallback signing secret for hotels that have not
+    # generated their own per-hotel secret yet. Per-hotel secrets take
+    # precedence; leave unset to require per-hotel secrets.
+    integration_fallback_secret: str | None = None
+    # Outbound webhook delivery (async integration responses).
+    integration_http_timeout_seconds: float = 5.0
+    integration_max_retries: int = 3
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

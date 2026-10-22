@@ -117,12 +117,7 @@ def test_booking_flow_with_confirmation_gate():
     finally:
         db.close()
 
-    body2 = _chat(
-        hotel["id"],
-        "yes, confirm please",
-        conversation_id=body["conversation_id"],
-        conversation_token=body["conversation_token"],
-    )
+    body2 = _chat(hotel["id"], "yes, confirm please", conversation_id=body["conversation_id"])
     assert "confirmed" in body2["reply"].lower()
     assert "create_booking" in [t["tool"] for t in body2["tool_trace"]]
     booking_id = body2["tool_trace"][-1]["result"]["booking_id"]

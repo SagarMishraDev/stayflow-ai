@@ -7,8 +7,6 @@ tool actions (never hidden chain-of-thought).
 
 from __future__ import annotations
 
-import secrets
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,43 +23,18 @@ def get_or_create_conversation(
     guest_id: int | None,
     channel: str,
     conversation_id: int | None = None,
-    conversation_token: str | None = None,
 ) -> Conversation:
-    if conversation_id is not None or conversation_token is not None:
-        conversation = None
-        if conversation_token:
-            conversation = db.scalar(
-                select(Conversation).where(
-                    Conversation.access_token == conversation_token,
-                    Conversation.hotel_id == hotel_id,
-                )
-            )
-        if conversation is None and conversation_id is not None:
-            candidate = db.scalar(
-                select(Conversation).where(
-                    Conversation.id == conversation_id,
-                    Conversation.hotel_id == hotel_id,
-                )
-            )
-
-            if candidate is not None:
-                if conversation_token:
-                    conversation = candidate
-                elif guest_id is not None and candidate.guest_id == guest_id:
-                    conversation = candidate
-        # Public web callers must prove possession of the opaque token before
-        # an existing conversation can be continued. A stale/invalid token
-        # starts a fresh conversation instead of exposing another transcript.
-        if conversation is None or (
-            conversation_token and conversation.access_token != conversation_token
-        ):
+    if conversation_id is not None:
+        conversation = db.get(Conversation, conversation_id)
+        if conversation is None or conversation.hotel_id != hotel_id:
+            raise ValueError("Conversation not found for this hotel")
+        if conversation.guest_id != guest_id:
+            # A guest may only continue their own conversation. Anyone else —
+            # including an anonymous caller holding another guest's
+            # conversation_id — gets a fresh conversation, so one guest can
+            # never read or continue another guest's conversation by swapping
+            # conversation_id.
             return create_conversation(db, hotel_id=hotel_id, guest_id=guest_id, channel=channel)
-        if conversation_id is not None and conversation.id != conversation_id:
-            return create_conversation(db, hotel_id=hotel_id, guest_id=guest_id, channel=channel)
-        if guest_id is not None and conversation.guest_id not in (None, guest_id):
-            return create_conversation(db, hotel_id=hotel_id, guest_id=guest_id, channel=channel)
-        if guest_id is not None and conversation.guest_id is None:
-            conversation.guest_id = guest_id
         return conversation
 
     if guest_id is not None:
@@ -98,7 +71,6 @@ def create_conversation(
         guest_id=guest_id,
         channel=channel,
         status="ACTIVE",
-        access_token=secrets.token_urlsafe(48),
     )
     db.add(conversation)
     db.flush()
