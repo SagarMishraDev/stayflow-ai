@@ -70,7 +70,7 @@ export default function Notifications() {
             {items.map((n) => (
               <li
                 key={n.id}
-                className={`panel p-4 ${n.is_read ? "opacity-70" : "border-l-4 border-l-brass-500"}`}
+                className={`panel p-4 ${n.is_read ? "opacity-70" : "border-l-4 border-l-sun"}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>

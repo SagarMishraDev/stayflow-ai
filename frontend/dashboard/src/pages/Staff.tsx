@@ -95,14 +95,14 @@ export default function Staff() {
                     <td className="whitespace-nowrap">
                       <button
                         type="button"
-                        className="mr-3 font-medium text-pine-700 underline"
+                        className="mr-3 font-medium text-deep-teal underline"
                         onClick={() => setEditing(u)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="font-medium text-brick-600 underline"
+                        className="font-medium text-coral-deep underline"
                         onClick={() => onDeactivate(u)}
                       >
                         {u.is_active ? "Deactivate" : "Reactivate"}
@@ -142,10 +142,10 @@ export default function Staff() {
 function RoleBadge({ role }: { role: string }) {
   const style =
     role === "super_admin"
-      ? "bg-pine-950 text-white"
+      ? "bg-ink text-white"
       : role === "hotel_admin"
-        ? "bg-pine-700 text-white"
-        : "bg-pine-950/10 text-ink/80 border border-pine-950/20";
+        ? "bg-deep-teal text-white"
+        : "bg-mist text-ink/70 border border-line";
   return (
     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${style}`}>
       {role.replace(/_/g, " ")}

@@ -13,6 +13,11 @@ untouched).
 | `/api/v1/*` | REST + agent + public APIs |
 | `/dashboard/` | Staff dashboard SPA (SPA fallback to its index) |
 
+The deployed demo runs the **real stack**: the Mercury LLM (Inception
+Labs) as the agent provider and a persistent **Neon PostgreSQL**
+database. The mock provider + throwaway SQLite remain available for
+local offline runs only.
+
 ## How it works
 
 - **Dashboard subpath build:** `frontend/dashboard` builds normally with
@@ -27,41 +32,81 @@ untouched).
   HTML in-memory — the committed landing files are never edited), and
   adds `/dashboard` routes that serve `dist-demo` files with SPA
   fallback.
-- **Seeding:** with `DEMO_SEED=1`, importing the wrapper creates tables
-  (`create_all` — a demo shortcut; production uses Alembic) and, if the
-  hotels table is empty, runs `scripts/seed_demo.py`. The seeded admin
-  is `admin@stayflowgrand.example` with the password from
-  `SEED_ADMIN_PASSWORD` (demo default in `render.yaml`: `Preview@123` —
-  **demo-only, on throwaway demo data; not a real credential**).
+- **First-boot database setup:** with `DEMO_SEED=1`, importing the
+  wrapper prepares the database via `app/demo_bootstrap.py` *before*
+  uvicorn serves anything:
+  - **PostgreSQL** (the live demo): Alembic migrations run to head
+    **in-process**, then — only if the hotels table is empty —
+    `scripts/seed_demo.py` loads the demo hotel. A migration failure
+    aborts startup loudly; a half-migrated database never serves.
+    Reboots against the migrated, seeded database are no-ops.
+  - **SQLite** (local throwaway runs): `create_all` shortcut, then the
+    same seed-if-empty.
+  The seeded admin is `admin@stayflowgrand.example` with the password
+  from `SEED_ADMIN_PASSWORD` (demo default in `render.yaml`:
+  `Preview@123` — **demo-only, on demo data; not a real credential**).
+- **DATABASE_URL normalization:** Neon hands out bare
+  `postgresql://…?sslmode=require` URLs. `Settings` rewrites them to
+  `postgresql+psycopg://` (the psycopg v3 driver this project ships) in
+  exactly one place (`app/core/config.py: normalize_database_url`), so
+  the app engine, the Alembic env and the demo bootstrap all see the
+  same URL.
 
-## Deploy on Render (remaining steps — need Sagar's logins)
+## Secrets (dashboard-only, never in git)
 
-1. Push this repo (including `Dockerfile.demo` + `render.yaml`) to
-   GitHub — *not done by the agent; no commit/push was made.*
-2. On render.com: **New → Blueprint**, connect the GitHub repo, select
-   the branch. Render reads `render.yaml` and creates the free
-   `stayflow-ai-demo` web service using `Dockerfile.demo` (the dashboard
-   is built inside the image by the Node stage — no local prebuild
-   needed).
-3. Wait for the first deploy; open the service URL. First boot seeds
-   the demo hotel automatically. Log in from the landing page's Staff
-   Login (or `/dashboard/`) with the demo admin above.
-4. Notes: the free plan sleeps when idle (first hit is slow) and its
-   filesystem is ephemeral — the SQLite demo DB is re-seeded on every
-   fresh boot, which is fine for a demo. `ENVIRONMENT=demo` is
-   deliberate: `production` mode (correctly) refuses SQLite and demands
-   production secrets; see the comment in `render.yaml`.
+`render.yaml` declares both secrets with `sync: false` — values are set
+in the Render dashboard and never committed:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Neon **direct** connection string (see below) |
+| `INCEPTION_API_KEY` | Inception Labs (Mercury) API key |
+
+Without `INCEPTION_API_KEY` the app refuses to start (fail-fast
+provider validation in `app/main.py`) — set both variables *before*
+triggering the redeploy that flips the providers to `inception`.
+
+## Neon setup (one-time)
+
+1. On [neon.tech](https://neon.tech): create a free account and a new
+   project (any name, e.g. `stayflow-ai`; default Postgres version).
+2. In the project, open **Connect / Connection Details**.
+3. Switch **Connection pooling OFF** and copy the **direct** connection
+   string — it looks like
+   `postgresql://<user>:<password>@<host>/<db>?sslmode=require`
+   (not the `-pooler` host; the app is a single small service and uses
+   the direct endpoint).
+4. On Render: `stayflow-ai-demo` → **Environment** → set `DATABASE_URL`
+   to that string, and `INCEPTION_API_KEY` to the Mercury key from the
+   Inception Labs dashboard. Save → the service redeploys.
+5. First boot against the empty Neon database runs the migrations and
+   the seed automatically (watch for `DEMO_SEED: migrations complete`
+   and `DEMO_SEED: seed complete` in the Render logs). Log in from the
+   landing page's Staff Login (or `/dashboard/`) with the demo admin
+   above.
+
+After that, **data persists across restarts and redeploys** — Neon is a
+durable database, unlike the old ephemeral SQLite file. Two free-tier
+behaviours remain: the Render app still **spins down when idle** (first
+hit after a nap is slow), and Neon **scales to zero** when idle and
+wakes automatically on the first connection (about a second) — neither
+loses data.
+
+`ENVIRONMENT=demo` is deliberate: `production` mode (correctly) refuses
+to boot without the full production secret set (Telegram/Twilio …);
+see the comment in `render.yaml`.
 
 ## Run the same image locally
 
 ```bash
 docker build -f Dockerfile.demo -t stayflow-demo .
-cp .env.demo.example .env.demo   # fill in any random JWT secret
+cp .env.demo.example .env.demo   # paste the real Neon URL + Mercury key
 docker run --rm -p 8000:8000 --env-file .env.demo stayflow-demo
 # → http://localhost:8000/  (landing)  ·  /dashboard/  ·  /chat
 ```
 
-Without Docker, the wrapper runs directly:
+Without Docker, the wrapper runs directly. This offline variant uses
+the mock provider + throwaway SQLite (no key, no network database):
 
 ```bash
 cd frontend/dashboard && VITE_BASE=/dashboard/ npm run build:demo && cd ../..

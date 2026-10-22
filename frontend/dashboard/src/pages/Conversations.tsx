@@ -26,9 +26,9 @@ import { Field, FormError } from "../components/Form";
 import type { ChatMessage } from "../lib/types";
 
 const SENDER_STYLE: Record<string, string> = {
-  guest: "bg-pine-950 text-white self-end",
-  agent: "bg-parchment border border-pine-950/15 self-start",
-  staff: "bg-pine-100 border border-pine-700/40 self-start",
+  guest: "bg-deep-teal text-white self-end",
+  agent: "bg-paper border border-line self-start",
+  staff: "bg-mist border border-teal/40 self-start",
   system: "bg-transparent text-ink/60 self-center text-sm",
 };
 
@@ -87,7 +87,7 @@ export function Conversations() {
                     <td>
                       <Link
                         to={`/conversations/${c.id}`}
-                        className="font-medium text-pine-700 underline"
+                        className="font-medium text-deep-teal underline"
                       >
                         Read
                       </Link>
@@ -141,6 +141,13 @@ export function ConversationDetail() {
 
   const conversation = conversationQuery.data;
 
+  // Defense in depth: the staff API already filters these out, but never
+  // render the agent's internal tool traces (raw JSON) as chat bubbles if
+  // a payload from an older backend or another client includes them.
+  const visibleMessages = (messagesQuery.data ?? []).filter(
+    (m) => m.message_type !== "TOOL_CALL" && m.message_type !== "TOOL_RESULT",
+  );
+
   return (
     <div>
       <PageHeader
@@ -171,7 +178,7 @@ export function ConversationDetail() {
               {messagesQuery.isLoading ? (
                 <div aria-busy="true" className="space-y-2 p-2" aria-label="Loading transcript">
                   {[0, 1, 2, 3].map((i) => (
-                    <div key={i} className="h-12 animate-pulse rounded-xl bg-pine-950/10" />
+                    <div key={i} className="h-12 animate-pulse rounded-xl bg-ink/10" />
                   ))}
                   <span className="sr-only">Loading transcript…</span>
                 </div>
@@ -189,13 +196,13 @@ export function ConversationDetail() {
                     Try again
                   </button>
                 </div>
-              ) : (messagesQuery.data ?? []).length === 0 ? (
+              ) : visibleMessages.length === 0 ? (
                 <p className="p-4 text-center text-sm text-ink/60">
                   No messages in this conversation yet.
                 </p>
               ) : (
                 <ol className="flex flex-1 flex-col gap-2 overflow-y-auto p-1">
-                  {(messagesQuery.data ?? []).map((m: ChatMessage) => (
+                  {visibleMessages.map((m: ChatMessage) => (
                     <li
                       key={m.id}
                       className={`max-w-[85%] rounded-xl px-3 py-2 ${SENDER_STYLE[m.sender_type] ?? SENDER_STYLE.system}`}
@@ -213,7 +220,7 @@ export function ConversationDetail() {
                 </ol>
               )}
 
-              <form onSubmit={handleSubmit(onSubmit)} className="mt-3 border-t border-pine-950/10 pt-3" noValidate>
+              <form onSubmit={handleSubmit(onSubmit)} className="mt-3 border-t border-line pt-3" noValidate>
                 <Field label="Reply as staff" htmlFor="staff-reply" error={errors.message?.message}>
                   <div className="flex gap-2">
                     <textarea
@@ -249,7 +256,7 @@ export function ConversationDetail() {
                       {conversation.guest_id ? (
                         <Link
                           to={`/guests/${conversation.guest_id}`}
-                          className="font-medium text-pine-700 underline"
+                          className="font-medium text-deep-teal underline"
                         >
                           {guestName(conversation.guest_id)}
                         </Link>

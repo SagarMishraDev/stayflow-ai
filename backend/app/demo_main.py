@@ -25,11 +25,13 @@ landing route with an injecting variant, and (b) appends the
 
 Demo seeding: when ``DEMO_SEED=1`` is set in the environment, startup
 (this module's import, which happens before uvicorn serves requests)
-creates the tables via ``Base.metadata.create_all`` — a DEMO shortcut;
-production uses Alembic — and, if the hotels table is empty, runs
-``scripts/seed_demo.py`` as a subprocess with ``SEED_ADMIN_PASSWORD``
-(default ``Preview@123``, a DEMO-ONLY password that is printed in the
-deploy docs; it is not a real credential).
+prepares the database via ``app.demo_bootstrap``: on PostgreSQL (the
+live demo, on Neon) it runs the Alembic migrations to head in-process;
+on SQLite (local throwaway runs) it keeps the ``create_all`` shortcut.
+Either way, if the hotels table is empty it then runs
+``scripts/seed_demo.py`` with ``SEED_ADMIN_PASSWORD`` (default
+``Preview@123``, a DEMO-ONLY password that is printed in the deploy
+docs; it is not a real credential).
 
 Run locally::
 
@@ -42,8 +44,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -65,48 +65,22 @@ _INJECT = f'<script>window.STAYFLOW_DASHBOARD_URL = "{_DASHBOARD_URL}";</script>
 # Demo seeding (DEMO_SEED=1)
 # --------------------------------------------------------------------------
 def _seed_demo_if_empty() -> None:
-    """Create tables and seed the demo hotel when DEMO_SEED=1.
+    """Prepare and seed the demo database when DEMO_SEED=1.
 
-    Idempotent: seeding only runs when the hotels table is empty; the
-    seed script itself is also natural-key idempotent.
+    Delegates to ``app.demo_bootstrap.prepare_demo_database``:
+    PostgreSQL (the live Neon demo) is migrated to Alembic head;
+    SQLite (local throwaway runs) uses ``create_all``. Both shapes
+    seed only when the hotels table is empty, and migration failures
+    raise — startup must fail loudly rather than serve a
+    half-migrated database.
     """
     if os.environ.get("DEMO_SEED") != "1":
         return
 
-    import app.models  # noqa: F401  (registers every model on Base)
-    from app.database import engine
-    from app.db.base import Base
-    from app.db.session import SessionLocal
-    from app.models.hotel import Hotel
+    from app.core.config import get_settings
+    from app.demo_bootstrap import prepare_demo_database
 
-    Base.metadata.create_all(bind=engine)
-
-    db = SessionLocal()
-    try:
-        hotel_count = db.query(Hotel).count()
-    finally:
-        db.close()
-    if hotel_count > 0:
-        logger.info("DEMO_SEED: %s hotel(s) already present, skipping seed", hotel_count)
-        return
-
-    pw_key = "SEED_ADMIN_" + "PASSWORD"
-    password = os.environ.get(pw_key) or "Preview" + chr(64) + "123"  # DEMO-ONLY
-    env = dict(os.environ)
-    env[pw_key] = password
-    logger.info("DEMO_SEED: seeding demo dataset (admin: admin@stayflowgrand.example)")
-    result = subprocess.run(
-        [sys.executable, str(_BACKEND_DIR / "scripts" / "seed_demo.py")],
-        cwd=str(_BACKEND_DIR),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode != 0:
-        logger.error("DEMO_SEED: seed_demo.py failed:\n%s", result.stderr[-2000:])
-        raise RuntimeError("demo seeding failed; see log above")
-    logger.info("DEMO_SEED: seed complete")
+    prepare_demo_database(get_settings().database_url)
 
 
 _seed_demo_if_empty()

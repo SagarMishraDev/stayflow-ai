@@ -47,7 +47,7 @@ export function TextInput<TFieldValues extends FieldValues>({
 export function FormError({ error }: { error: string | null }) {
   if (!error) return null;
   return (
-    <p role="alert" className="rounded-lg border border-brick-600/40 bg-brick-100 p-3 text-sm text-brick-700">
+    <p role="alert" className="rounded-xl border border-coral/50 bg-coral-soft p-3 text-sm font-semibold text-coral-deep">
       {error}
     </p>
   );
@@ -72,7 +72,7 @@ export function Modal({
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-pine-950/50 p-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-ink/55 p-4"
       onClick={onClose}
       role="presentation"
     >

@@ -119,8 +119,8 @@ export default function Negotiations() {
                         <span
                           className={`inline-block whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                             r.is_active
-                              ? "bg-pine-700 text-white"
-                              : "bg-pine-950/10 text-ink/70 border border-pine-950/20"
+                              ? "bg-deep-teal text-white"
+                              : "bg-ink/10 text-ink/70 border border-line"
                           }`}
                         >
                           {r.is_active ? "Active" : "Inactive"}
@@ -129,7 +129,7 @@ export default function Negotiations() {
                       <td className="whitespace-nowrap">
                         <button
                           type="button"
-                          className="mr-3 font-medium text-pine-700 underline"
+                          className="mr-3 font-medium text-deep-teal underline"
                           onClick={() => {
                             setEditingRule(r.id);
                             setShowRuleModal(true);
@@ -139,7 +139,7 @@ export default function Negotiations() {
                         </button>
                         <button
                           type="button"
-                          className="font-medium text-brick-600 underline"
+                          className="font-medium text-coral-deep underline"
                           onClick={() => onDelete(r.id)}
                           disabled={remove.isPending}
                         >
@@ -319,14 +319,14 @@ function EvaluateForm({ hotelId }: { hotelId: number }) {
       </form>
       <FormError error={serverError} />
       {result && (
-        <div className="mt-4 rounded-xl border border-pine-950/15 bg-paper p-4" aria-live="polite">
+        <div className="mt-4 rounded-xl border border-line bg-paper p-4" aria-live="polite">
           <p className="font-semibold">
             {result.accepted ? (
-              <span className="text-pine-700">Offer accepted</span>
+              <span className="text-deep-teal">Offer accepted</span>
             ) : result.requires_approval ? (
-              <span className="text-brass-600">Needs staff approval</span>
+              <span className="text-coral-deep">Needs staff approval</span>
             ) : (
-              <span className="text-brick-600">Offer declined</span>
+              <span className="text-coral-deep">Offer declined</span>
             )}
           </p>
           <dl className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">

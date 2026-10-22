@@ -85,8 +85,8 @@ export default function AvailabilityCalendar() {
                   onClick={() => setSelectedRoomId(r.id)}
                   className={`rounded-xl border px-4 py-2.5 text-left text-sm font-semibold ${
                     selectedRoomId === r.id
-                      ? "border-pine-950 bg-pine-950 text-white"
-                      : "border-pine-950/20 bg-parchment hover:border-pine-700"
+                      ? "border-deep-teal bg-deep-teal text-white"
+                      : "border-line bg-paper hover:border-teal"
                   }`}
                 >
                   {r.room_type}
@@ -129,7 +129,7 @@ export default function AvailabilityCalendar() {
           {checkQuery.isLoading ? (
             <div aria-busy="true" className="grid grid-cols-7 gap-1.5" aria-label="Loading availability">
               {Array.from({ length: 35 }).map((_, i) => (
-                <div key={i} className="h-16 animate-pulse rounded-lg bg-parchment" />
+                <div key={i} className="h-16 animate-pulse rounded-lg bg-mist" />
               ))}
               <span className="sr-only">Loading availability…</span>
             </div>
@@ -143,22 +143,22 @@ export default function AvailabilityCalendar() {
             </div>
           ) : (
             <div className="panel overflow-hidden">
-              <div className="grid grid-cols-7 border-b border-pine-950/15 bg-pine-50/60 text-center text-xs font-semibold text-ink/60">
+              <div className="grid grid-cols-7 border-b border-line bg-mist/60 text-center text-xs font-semibold text-ink/60">
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                   <div key={d} className="py-2">{d}</div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-px bg-pine-950/10">
+              <div className="grid grid-cols-7 gap-px bg-ink/10">
                 {days.map((iso, i) => {
                   if (iso === null)
-                    return <div key={`pad-${i}`} className="min-h-16 bg-parchment" />;
+                    return <div key={`pad-${i}`} className="min-h-16 bg-paper" />;
                   const n = byDate.get(iso);
                   const isSoldOut = n !== undefined && n.available <= 0;
                   return (
                     <div
                       key={iso}
                       className={`min-h-16 p-1.5 ${
-                        isSoldOut ? "bg-brick-600 text-white" : "bg-parchment"
+                        isSoldOut ? "bg-coral-deep text-white" : "bg-paper"
                       }`}
                       aria-label={`${formatDate(iso)}: ${
                         n === undefined
@@ -186,7 +186,7 @@ export default function AvailabilityCalendar() {
                   );
                 })}
               </div>
-              <p className="border-t border-pine-950/10 px-4 py-2 text-xs text-ink/60">
+              <p className="border-t border-line px-4 py-2 text-xs text-ink/60">
                 Read-only view from the booking engine. To change availability,
                 set rates under Rooms &amp; rates.
               </p>

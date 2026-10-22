@@ -81,7 +81,7 @@ export default function Knowledge() {
                       {d.status === "processing" && (
                         <button
                           type="button"
-                          className="ml-2 text-xs font-medium text-pine-700 underline"
+                          className="ml-2 text-xs font-medium text-deep-teal underline"
                           onClick={() => setWatchingId(d.id)}
                         >
                           Watch
@@ -92,7 +92,7 @@ export default function Knowledge() {
                     <td>
                       <button
                         type="button"
-                        className="font-medium text-brick-600 underline"
+                        className="font-medium text-coral-deep underline"
                         onClick={() => onDelete(d.id, d.title)}
                         disabled={remove.isPending}
                       >
@@ -213,7 +213,7 @@ function WatchModal({
           )}
         </p>
         {live?.status === "failed" && live.error && (
-          <p role="alert" className="mt-2 rounded-lg border border-brick-600/40 bg-brick-100 p-3 text-sm text-brick-700">
+          <p role="alert" className="mt-2 rounded-lg border border-coral/50 bg-coral-soft p-3 text-sm text-coral-deep">
             {live.error}
           </p>
         )}

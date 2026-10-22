@@ -126,8 +126,8 @@ export default function RoomsRates() {
                   onClick={() => setSelectedRoomId(r.id)}
                   className={`rounded-xl border px-4 py-2.5 text-left ${
                     selectedRoomId === r.id
-                      ? "border-pine-950 bg-pine-950 text-white"
-                      : "border-pine-950/20 bg-parchment hover:border-pine-700"
+                      ? "border-deep-teal bg-deep-teal text-white"
+                      : "border-line bg-paper hover:border-teal"
                   }`}
                 >
                   <span className="block text-sm font-semibold">{r.room_type}</span>
@@ -177,7 +177,7 @@ export default function RoomsRates() {
           {ratesQuery.isLoading ? (
             <div aria-busy="true" className="grid grid-cols-7 gap-1.5" aria-label="Loading rates">
               {Array.from({ length: 35 }).map((_, i) => (
-                <div key={i} className="h-16 animate-pulse rounded-lg bg-parchment" />
+                <div key={i} className="h-16 animate-pulse rounded-lg bg-mist" />
               ))}
               <span className="sr-only">Loading rates…</span>
             </div>
@@ -191,15 +191,15 @@ export default function RoomsRates() {
             </div>
           ) : (
             <div className="panel overflow-hidden">
-              <div className="grid grid-cols-7 border-b border-pine-950/15 bg-pine-50/60 text-center text-xs font-semibold text-ink/60">
+              <div className="grid grid-cols-7 border-b border-line bg-mist/60 text-center text-xs font-semibold text-ink/60">
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                   <div key={d} className="py-2">{d}</div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-px bg-pine-950/10">
+              <div className="grid grid-cols-7 gap-px bg-ink/10">
                 {days.map((iso, i) =>
                   iso === null ? (
-                    <div key={`pad-${i}`} className="min-h-16 bg-parchment" />
+                    <div key={`pad-${i}`} className="min-h-16 bg-paper" />
                   ) : (
                     <RateCell
                       key={iso}
@@ -218,7 +218,7 @@ export default function RoomsRates() {
                   ),
                 )}
               </div>
-              <p className="border-t border-pine-950/10 px-4 py-2 text-xs text-ink/60">
+              <p className="border-t border-line px-4 py-2 text-xs text-ink/60">
                 Select a day to set or change its rate. Cells marked "no rate" are
                 priced as missing when a booking is quoted.
               </p>
@@ -253,8 +253,8 @@ export default function RoomsRates() {
                       key={hr.id}
                       className={`rounded-lg border px-3 py-2 font-mono text-sm ${
                         hr.is_active
-                          ? "border-pine-950/20 bg-parchment"
-                          : "border-pine-950/20 bg-pine-950/5 text-ink/50 line-through"
+                          ? "border-line bg-paper"
+                          : "border-line bg-mist text-ink/50 line-through"
                       }`}
                     >
                       {hr.room_number}
@@ -317,8 +317,8 @@ function RateCell({
       type="button"
       onClick={onEdit}
       aria-label={`${formatDate(date)}: ${rate ? formatMoney(rate.price, currency) : "no rate set"}`}
-      className={`min-h-16 bg-parchment p-1.5 text-left hover:bg-pine-50 ${
-        rate ? "" : "bg-brass-100/40"
+      className={`min-h-16 bg-paper p-1.5 text-left hover:bg-mist ${
+        rate ? "" : "bg-sun/15"
       }`}
     >
       <span className="block text-xs font-semibold text-ink/60">{dayNum}</span>
@@ -327,7 +327,7 @@ function RateCell({
           {formatMoney(rate.price, currency).replace(/\.00$/, "")}
         </span>
       ) : (
-        <span className="block text-xs text-brass-600">no rate</span>
+        <span className="block text-xs text-ink/50">no rate</span>
       )}
       {available !== undefined && (
         <span className="block text-[11px] text-ink/50">{available} left</span>

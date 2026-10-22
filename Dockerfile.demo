@@ -17,9 +17,13 @@
 #
 # This file is DEMO-ONLY and deliberately separate from backend/Dockerfile
 # (the production multi-service build, which is untouched). Differences:
-# demo seeding uses create_all + scripts/seed_demo.py instead of Alembic,
-# and the LLM runs on the mock provider. Do not use this image for real
-# production data.
+# on PostgreSQL (the live demo, on Neon) first boot runs the Alembic
+# migrations in-process via app.demo_bootstrap; on SQLite (local
+# throwaway runs) it uses create_all. Seeding runs
+# scripts/seed_demo.py when the hotels table is empty. The deployed demo
+# uses the real Mercury provider (see render.yaml); local runs may opt
+# into the mock provider. Do not use this image for real production
+# data.
 
 # ---------------------------------------------------------------------------
 # Stage 1 — dashboard SPA, built for the /dashboard/ subpath
@@ -72,8 +76,9 @@ COPY --from=builder /app/.venv /app/backend/.venv
 # when the venv is relocated — the CMD below therefore uses `python -m`.
 RUN /app/backend/.venv/bin/python -m uvicorn --version
 
-# App code + alembic (kept for parity/debugging) + seed scripts (the demo
-# wrapper runs scripts/seed_demo.py when DEMO_SEED=1).
+# App code + alembic (the demo wrapper runs the migrations in-process
+# on PostgreSQL) + seed scripts (it runs scripts/seed_demo.py when
+# DEMO_SEED=1 and the hotels table is empty).
 COPY backend/app ./app
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./

@@ -91,8 +91,8 @@ export default function Menu() {
               aria-pressed={categoryFilter === c}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                 categoryFilter === c
-                  ? "bg-pine-950 text-white"
-                  : "border border-pine-950/25 bg-parchment hover:bg-pine-50"
+                  ? "bg-deep-teal text-white"
+                  : "border border-line bg-paper hover:bg-mist"
               }`}
             >
               {c === "ALL" ? "All" : c}
@@ -144,7 +144,7 @@ export default function Menu() {
                           type="button"
                           onClick={() => toggleAvailable(item)}
                           disabled={update.isPending}
-                          className="font-medium text-pine-700 underline"
+                          className="font-medium text-deep-teal underline"
                           aria-label={`${item.is_available ? "Mark unavailable" : "Mark available"}: ${item.name}`}
                         >
                           {item.is_available ? "Yes" : "No"}
@@ -154,7 +154,7 @@ export default function Menu() {
                       <td className="whitespace-nowrap">
                         <button
                           type="button"
-                          className="mr-3 font-medium text-pine-700 underline"
+                          className="mr-3 font-medium text-deep-teal underline"
                           onClick={() => {
                             setEditing(item);
                             setShowModal(true);
@@ -164,7 +164,7 @@ export default function Menu() {
                         </button>
                         <button
                           type="button"
-                          className="font-medium text-brick-600 underline"
+                          className="font-medium text-coral-deep underline"
                           onClick={() => onDelete(item)}
                           disabled={remove.isPending}
                         >

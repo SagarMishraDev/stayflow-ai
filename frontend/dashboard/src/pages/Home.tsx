@@ -89,24 +89,24 @@ export default function Home() {
         })}
       />
 
-      {/* The bold moment: today's movement, brass numerals on deep pine. */}
+      {/* The bold moment: today's movement, sun numerals on deep teal. */}
       <section
         aria-label="Today's arrivals and departures"
-        className="mb-6 rounded-xl bg-pine-950 p-6 text-white md:p-8"
+        className="mb-6 rounded-2xl bg-deep-teal p-6 text-white shadow-card md:p-8"
       >
         <div className="grid gap-6 sm:grid-cols-2">
-          <div className="border-l-4 border-brass-500 pl-5">
+          <div className="border-l-4 border-sun pl-5">
             <p className="text-sm font-medium text-white/70">Arrivals</p>
-            <p className="font-mono text-6xl font-semibold text-brass-500 tabular-nums">
+            <p className="font-mono text-6xl font-semibold text-sun tabular-nums">
               {arrivals.length}
             </p>
             <p className="mt-1 text-sm text-white/60">
               checking in today
             </p>
           </div>
-          <div className="border-l-4 border-brass-500 pl-5">
+          <div className="border-l-4 border-sun pl-5">
             <p className="text-sm font-medium text-white/70">Departures</p>
-            <p className="font-mono text-6xl font-semibold text-brass-500 tabular-nums">
+            <p className="font-mono text-6xl font-semibold text-sun tabular-nums">
               {departures.length}
             </p>
             <p className="mt-1 text-sm text-white/60">checking out today</p>
@@ -130,7 +130,7 @@ export default function Home() {
           <p className="mt-1 font-mono text-3xl font-semibold tabular-nums">
             {openRequests.length}
           </p>
-          <Link to="/service-requests" className="text-sm font-medium text-pine-700 underline">
+          <Link to="/service-requests" className="text-sm font-medium text-deep-teal underline">
             Open the board
           </Link>
         </div>
@@ -139,14 +139,14 @@ export default function Home() {
           <p className="mt-1 font-mono text-3xl font-semibold tabular-nums">
             {activeConversations.length}
           </p>
-          <Link to="/conversations" className="text-sm font-medium text-pine-700 underline">
+          <Link to="/conversations" className="text-sm font-medium text-deep-teal underline">
             Read transcripts
           </Link>
         </div>
       </section>
 
       <section aria-label="Today's movement" className="panel overflow-hidden">
-        <h2 className="panel-title border-b border-pine-950/10 px-5 py-4">
+        <h2 className="panel-title border-b border-line px-5 py-4">
           Today's movement
         </h2>
         {movement.length === 0 ? (
@@ -183,7 +183,7 @@ export default function Home() {
                     <td>
                       <Link
                         to={`/bookings/${b.id}`}
-                        className="font-medium text-pine-700 underline"
+                        className="font-medium text-deep-teal underline"
                       >
                         Open
                       </Link>

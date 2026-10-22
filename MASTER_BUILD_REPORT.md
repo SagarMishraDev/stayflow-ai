@@ -472,3 +472,130 @@ Sagar's GitHub/Render login and are listed at the end.
 `frontend/dashboard/dist-demo` is a build artifact and is **excluded**
 from the delivery ZIP — `Dockerfile.demo` rebuilds it in its Node stage,
 so source-only deploys work.
+
+---
+
+# Bugfix — chat display + mock booking flow (2026-10-22)
+
+Two bugs reported from the live demo (dashboard screenshots):
+
+1. **Staff transcript leaked raw tool JSON.** The agent runner persists
+   its tool traces as `TOOL_CALL` / `TOOL_RESULT` message rows (they are
+   the agent's own history). The staff endpoint
+   `GET /conversations/{id}/messages` returned every row, so the
+   dashboard rendered `{"tool": "search_faq", ...}` as chat bubbles.
+   **Fix:** the endpoint now returns only `message_type == "TEXT"` rows
+   (guest, agent, and staff replies are all TEXT; the staff POST already
+   writes TEXT). The runner's history path (`conversation_store
+   .get_history`, used by `_history_messages`) is deliberately NOT
+   filtered — the agent still sees its tool rows. Dashboard
+   defense-in-depth: `ConversationDetail` also drops TOOL_CALL /
+   TOOL_RESULT rows client-side before rendering.
+2. **Mock AI lost the booking conversation.** A bare date reply
+   (`23/11/2026`) after "ok book it" fell into the FAQ no-answer
+   fallback ("I don't have an answer for that yet… front desk?").
+   **Fix (mock provider only):**
+   - `_extract_dates` now parses day-first numeric dates
+     (23/11/2026, 23-11-2026, 23.11.2026 — Indian locale), month names
+     (23 Nov 2026 / Nov 23, 2026), "today", plus the existing ISO and
+     "tomorrow"; invalid dates (31/02/2026) are skipped.
+   - Slot carryover: `_gather_booking_slots` collects room / dates /
+     guest count from all guest messages in the conversation.
+   - Pending-booking guard (router step 2b): when a booking is in
+     progress (list_rooms shown, or the agent asked for details /
+     identity, and nothing previewed yet) and the reply carries slot
+     info, the agent completes the slots via the shared
+     `_continue_booking` (preview → guest lookup → identity ask) or asks
+     ONLY for the missing pieces (e.g. "I've noted check-in:
+     2026-11-23. I still need: room type, check-out date."). It never
+     routes such a reply to `search_faq`. The deterministic
+     preview → confirm → create_booking gate is unchanged.
+
+**Tests:** new `backend/tests/test_chat_bugfixes.py` (4 tests — date
+formats, staff filter vs. agent history, carryover-to-preview flow with
+confirmation gate, pending-guard missing-pieces flow). Suite:
+**203 passed / 2 failed / 2 deselected** (baseline 199/2/2; the 2
+failures are the same pre-existing SQLite-environment ones —
+`test_hotel_crud_and_validation`, `test_ingest_document_creates_chunks
+_and_embeddings`). `ruff check` + `ruff format --check` clean; dashboard
+`npm run build` and `npm run build:demo` both pass.
+
+**Live smoke** (public chat API, mock provider, demo seed): "i want an
+room" → room list; "ok book it" → asks room type + dates; "23/11/2026"
+→ "I've noted check-in: 2026-11-23. I still need: room type, check-out
+date."; "Deluxe King Room, check-out 25/11/2026" → identity ask (slots
+completed across turns).
+
+Note: the fixes take effect on the live Render demo only after the
+parent pushes this commit and Render redeploys.
+
+# Real AI + Neon switch — prepared 2026-10-22
+
+Status: **prepared locally, NOT pushed.** The live demo still runs
+mock + ephemeral SQLite until the parent pushes this change and Sagar
+pastes the two dashboard secrets (below); live verification is pending
+that push.
+
+What changed:
+
+- **render.yaml:** `LLM_PROVIDER`/`AGENT_PROVIDER` flipped from `mock`
+  to `inception` (real Mercury). `INCEPTION_API_KEY` and `DATABASE_URL`
+  are now declared with `sync: false` (values live only in the Render
+  dashboard — the SQLite literal is gone). `ENVIRONMENT=demo`,
+  `DEMO_SEED=1`, `JWT_SECRET_KEY generateValue`,
+  `EMBEDDING_PROVIDER=hashed`, `SEED_ADMIN_PASSWORD`, free plan and the
+  `Dockerfile.demo` path are unchanged. `.env.demo.example` mirrors the
+  new variable set with placeholders and Neon/Inception notes.
+- **app/demo_bootstrap.py (new):** the `DEMO_SEED=1` bootstrap moved out
+  of `app/demo_main.py` into small testable functions. On PostgreSQL it
+  runs the Alembic migrations to head **in-process** (bare
+  `alembic.config.Config` + explicit `script_location`; the URL comes
+  from settings — `alembic/env.py` re-derives the same normalized
+  `sqlalchemy.url` from `get_settings()`, one source of truth), then
+  seeds only if the hotels table is empty. Migration failure raises —
+  startup fails loudly rather than serving a half-migrated database.
+  On SQLite the original `create_all` + seed-if-empty shortcut is
+  unchanged. Re-running against a migrated, seeded Neon database is a
+  no-op, and data now persists across restarts/redeploys.
+- **DATABASE_URL normalization:** Neon hands out bare
+  `postgresql://…?sslmode=require` URLs, but the project ships psycopg
+  v3 only. `normalize_database_url` in `app/core/config.py` rewrites
+  `postgres://` / bare `postgresql://` to `postgresql+psycopg://`
+  (query string intact; already-qualified and SQLite URLs untouched),
+  applied by a `Settings` field validator — the single point the app
+  engine, the Alembic env and the demo bootstrap all read.
+- **Docs:** `docs/DEMO_DEPLOY.md` rewritten for the Neon + Mercury flow
+  (Neon project → copy the **direct** connection string with pooling
+  off → paste `DATABASE_URL` + `INCEPTION_API_KEY` into Render → first
+  boot migrates + seeds; persistence and free-tier spin-down notes).
+  Stale header comments in `Dockerfile.demo` updated to match.
+
+Tests: new `backend/tests/test_demo_bootstrap.py` (15 tests — normalizer
+parametrized cases incl. pass-through and idempotency, Settings-level
+application, and the branch with faked migrate/create_all/count/seed
+steps: Postgres migrates + never create_alls, SQLite create_alls +
+never migrates, seed skipped when hotels exist, migration failure
+propagates and the seed never runs). Full suite on the sandbox's
+SQLite: **217 passed / 3 failed / 2 deselected** (baseline measured
+before this change: 203/2/2). The 15 new tests all pass and no test
+that passed in the baseline broke for a code reason; the third failure
+is `test_concurrent_bookings_cannot_oversell_last_room`, a two-thread
+race test that is timing-marginal on SQLite (no row locking — the
+loser's oversell window is pure thread interleaving). During
+verification it flipped both ways across full-suite runs and was shown
+to flip even when the ONLY change was adding a content-free dummy test
+file (15 trivial asserts, no app imports), i.e. any suite-composition
+perturbation moves it; it passes in isolation, and on PostgreSQL (CI)
+`SELECT … FOR UPDATE` makes it deterministic. Live smokes in the
+sandbox: the rewired `DEMO_SEED=1` SQLite boot ran create_all + the
+real seed end-to-end (1 hotel; second boot logged "already present,
+skipping seed"), and the PostgreSQL branch entered `run_migrations`
+and raised `sqlalchemy.exc.OperationalError` loudly against an
+unreachable server — never a silent fallback. (No live Neon run is
+possible from the sandbox; first real boot happens on Render after the
+push + secret paste.) `ruff check` and `ruff format --check` clean.
+
+Pending (parent + Sagar): push; Sagar creates the Neon project and
+pastes `DATABASE_URL` + `INCEPTION_API_KEY` into the Render dashboard;
+then verify live (health, Mercury chat reply, data surviving a
+redeploy).

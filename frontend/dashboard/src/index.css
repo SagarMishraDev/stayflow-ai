@@ -12,51 +12,62 @@ body {
 
 /* Visible focus for keyboard navigation, everywhere. */
 :focus-visible {
-  outline: 2px solid #1f6b5c;
+  outline: 2px solid #1ba39c;
   outline-offset: 2px;
   border-radius: 4px;
 }
 
+@layer base {
+  /* Landing design language: headings in Barlow Condensed, uppercase. */
+  h1,
+  h2,
+  h3 {
+    @apply font-display uppercase;
+    letter-spacing: 0.01em;
+  }
+}
+
 @layer components {
   .panel {
-    @apply bg-parchment border border-pine-950/15 rounded-xl;
+    @apply bg-mist border border-line rounded-2xl shadow-card;
   }
   .panel-title {
-    @apply text-base font-semibold tracking-tight;
+    @apply font-display text-xl font-bold uppercase tracking-wide;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
-      transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-extrabold
+      transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
   }
   .btn-primary {
-    @apply bg-pine-950 text-white hover:bg-pine-700;
+    @apply bg-deep-teal text-white shadow-card hover:bg-teal;
   }
   .btn-secondary {
-    @apply bg-parchment border border-pine-950/25 text-ink hover:bg-pine-50;
+    @apply bg-paper border border-line text-ink hover:bg-mist;
   }
   .btn-danger {
-    @apply bg-brick-600 text-white hover:bg-brick-700;
+    @apply bg-coral-deep text-white hover:bg-coral-deep/85;
   }
   .input {
-    @apply w-full rounded-lg border border-pine-950/25 bg-white px-3 py-2 text-sm
-      placeholder:text-ink/40 focus:border-pine-700;
+    @apply w-full rounded-[0.8rem] border border-line bg-white px-3 py-2 text-sm
+      placeholder:text-ink/40 focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30;
   }
   .label {
-    @apply block text-sm font-medium mb-1;
+    @apply block text-sm font-extrabold mb-1;
   }
   .field-error {
-    @apply text-sm text-brick-600 mt-1;
+    @apply text-sm font-semibold text-coral-deep mt-1;
   }
   .table {
     @apply w-full text-sm;
   }
   .table th {
-    @apply text-left font-semibold text-ink/70 border-b border-pine-950/15 px-3 py-2;
+    @apply bg-paper/60 text-left font-display text-[0.95rem] font-semibold uppercase tracking-[0.08em]
+      text-deep-teal border-b border-line px-3 py-2.5;
   }
   .table td {
-    @apply border-b border-pine-950/10 px-3 py-2 align-top;
+    @apply border-b border-ink/10 px-3 py-2 align-top;
   }
   .table tbody tr:hover {
-    @apply bg-pine-50/60;
+    @apply bg-paper/70;
   }
 }

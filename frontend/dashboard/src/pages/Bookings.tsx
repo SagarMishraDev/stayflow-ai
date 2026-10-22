@@ -96,8 +96,8 @@ export default function Bookings() {
               aria-pressed={statusFilter === s}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                 statusFilter === s
-                  ? "bg-pine-950 text-white"
-                  : "border border-pine-950/25 bg-parchment hover:bg-pine-50"
+                  ? "bg-deep-teal text-white"
+                  : "border border-line bg-paper hover:bg-mist"
               }`}
             >
               {s === "ALL" ? "All" : s.replace(/_/g, " ")}
@@ -167,7 +167,7 @@ export default function Bookings() {
                       <td>
                         <Link
                           to={`/bookings/${b.id}`}
-                          className="font-medium text-pine-700 underline"
+                          className="font-medium text-deep-teal underline"
                         >
                           Open
                         </Link>

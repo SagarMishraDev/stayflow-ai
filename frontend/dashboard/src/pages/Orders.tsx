@@ -110,8 +110,8 @@ export default function Orders() {
               aria-pressed={statusFilter === s}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                 statusFilter === s
-                  ? "bg-pine-950 text-white"
-                  : "border border-pine-950/25 bg-parchment hover:bg-pine-50"
+                  ? "bg-deep-teal text-white"
+                  : "border border-line bg-paper hover:bg-mist"
               }`}
             >
               {s === "ALL" ? "All" : s.replace(/_/g, " ")}
@@ -207,7 +207,7 @@ function OrderRow({
         <td>
           <Link
             to={`/guests/${order.guest_id}`}
-            className="font-medium text-pine-700 underline"
+            className="font-medium text-deep-teal underline"
           >
             {guest}
           </Link>
@@ -230,7 +230,7 @@ function OrderRow({
         <td className="whitespace-nowrap">
           <button
             type="button"
-            className="mr-3 font-medium text-pine-700 underline"
+            className="mr-3 font-medium text-deep-teal underline"
             onClick={onToggle}
             aria-expanded={expanded}
           >
@@ -273,7 +273,7 @@ function OrderRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={8} className="bg-pine-50/50">
+          <td colSpan={8} className="bg-mist/50">
             <OrderItems orderId={order.id} />
           </td>
         </tr>
@@ -296,7 +296,7 @@ function OrderItems({ orderId }: { orderId: number }) {
   if (itemsQuery.isLoading) {
     return (
       <div aria-busy="true" className="space-y-2 p-2">
-        <div className="h-8 animate-pulse rounded bg-pine-950/10" />
+        <div className="h-8 animate-pulse rounded bg-ink/10" />
         <span className="sr-only">Loading order items…</span>
       </div>
     );

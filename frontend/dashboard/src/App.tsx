@@ -31,7 +31,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper">
-        <div aria-busy="true" className="h-10 w-64 animate-pulse rounded-xl bg-pine-950/10" aria-label="Loading session" />
+        <div aria-busy="true" className="h-10 w-64 animate-pulse rounded-xl bg-ink/10" aria-label="Loading session" />
         <span className="sr-only">Loading session…</span>
       </div>
     );

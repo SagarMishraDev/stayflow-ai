@@ -29,21 +29,21 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-pine-950 px-4">
-      <div className="panel w-full max-w-md p-8">
-        <div className="mb-6 flex items-center gap-3">
+    <div className="flex min-h-screen items-center justify-center bg-mist px-4 py-10">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-line bg-paper shadow-lift">
+        <div className="flex items-center gap-3 bg-deep-teal px-8 py-6">
           <span
             aria-hidden
-            className="grid h-12 w-12 place-items-center rounded-full bg-brass-500 font-mono text-2xl font-semibold text-pine-950"
+            className="grid h-12 w-12 place-items-center rounded-xl bg-sun font-display text-3xl font-bold text-ink ring-2 ring-inset ring-ink"
           >
             S
           </span>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">StayFlow Ops</h1>
-            <p className="text-sm text-ink/60">Staff sign-in</p>
+            <h1 className="text-3xl font-bold leading-none text-white">StayFlow Ops</h1>
+            <p className="mt-1 text-sm font-semibold text-white/75">Staff sign-in</p>
           </div>
         </div>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 px-8 pt-8" noValidate>
           <Field label="Email" htmlFor="email" error={errors.email?.message}>
             <TextInput
               id="email"
@@ -72,7 +72,7 @@ export default function Login() {
             {isSubmitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <p className="mt-4 text-xs text-ink/50">
+        <p className="px-8 pb-8 pt-4 text-xs text-ink/50">
           Sessions expire after 8 hours. Your role determines which areas of
           the console you can see.
         </p>

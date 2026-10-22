@@ -52,7 +52,7 @@ export default function Settings() {
         title="Hotel settings"
         description="The details the concierge quotes to guests: profile, policies, FAQs, and offers."
       />
-      <div className="mb-6 flex gap-1.5 border-b border-pine-950/15" role="tablist" aria-label="Settings sections">
+      <div className="mb-6 flex gap-1.5 border-b border-line" role="tablist" aria-label="Settings sections">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -62,7 +62,7 @@ export default function Settings() {
             onClick={() => setTab(t.id)}
             className={`rounded-t-lg px-4 py-2.5 text-sm font-semibold ${
               tab === t.id
-                ? "border-b-2 border-pine-950 text-pine-950"
+                ? "border-b-2 border-sun text-ink"
                 : "text-ink/60 hover:text-ink"
             }`}
           >
@@ -99,7 +99,7 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
     return (
       <div aria-busy="true" className="panel max-w-2xl space-y-3 p-6" aria-label="Loading hotel profile">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-10 animate-pulse rounded bg-pine-950/10" />
+          <div key={i} className="h-10 animate-pulse rounded bg-ink/10" />
         ))}
         <span className="sr-only">Loading hotel profile…</span>
       </div>
@@ -192,7 +192,7 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
       </div>
       <FormError error={serverError} />
       {saved && (
-        <p role="status" className="rounded-lg bg-pine-100 p-3 text-sm text-pine-950">
+        <p role="status" className="rounded-lg bg-mist p-3 text-sm text-deep-teal">
           Hotel profile saved.
         </p>
       )}
@@ -254,10 +254,10 @@ function PoliciesSection({ hotelId }: { hotelId: number }) {
                     <p className="mt-1 text-sm text-ink/75 whitespace-pre-wrap">{p.description}</p>
                   </div>
                   <div className="flex shrink-0 gap-3 text-sm">
-                    <button type="button" className="font-medium text-pine-700 underline" onClick={() => { setEditing(p); setShowModal(true); }}>
+                    <button type="button" className="font-medium text-deep-teal underline" onClick={() => { setEditing(p); setShowModal(true); }}>
                       Edit
                     </button>
-                    <button type="button" className="font-medium text-brick-600 underline" onClick={() => onDelete(p)} disabled={remove.isPending}>
+                    <button type="button" className="font-medium text-coral-deep underline" onClick={() => onDelete(p)} disabled={remove.isPending}>
                       Delete
                     </button>
                   </div>
@@ -403,10 +403,10 @@ function FaqsSection({ hotelId }: { hotelId: number }) {
                     )}
                   </div>
                   <div className="flex shrink-0 gap-3 text-sm">
-                    <button type="button" className="font-medium text-pine-700 underline" onClick={() => { setEditing(f); setShowModal(true); }}>
+                    <button type="button" className="font-medium text-deep-teal underline" onClick={() => { setEditing(f); setShowModal(true); }}>
                       Edit
                     </button>
-                    <button type="button" className="font-medium text-brick-600 underline" onClick={() => onDelete(f)} disabled={remove.isPending}>
+                    <button type="button" className="font-medium text-coral-deep underline" onClick={() => onDelete(f)} disabled={remove.isPending}>
                       Delete
                     </button>
                   </div>
@@ -568,10 +568,10 @@ function OffersSection({ hotelId }: { hotelId: number }) {
                     </td>
                     <td>{o.is_active ? "Yes" : "No"}</td>
                     <td className="whitespace-nowrap">
-                      <button type="button" className="mr-3 font-medium text-pine-700 underline" onClick={() => { setEditing(o); setShowModal(true); }}>
+                      <button type="button" className="mr-3 font-medium text-deep-teal underline" onClick={() => { setEditing(o); setShowModal(true); }}>
                         Edit
                       </button>
-                      <button type="button" className="font-medium text-brick-600 underline" onClick={() => onDelete(o)} disabled={remove.isPending}>
+                      <button type="button" className="font-medium text-coral-deep underline" onClick={() => onDelete(o)} disabled={remove.isPending}>
                         Delete
                       </button>
                     </td>
@@ -703,7 +703,7 @@ function IntegrationsSection() {
     return (
       <div aria-busy="true" className="panel max-w-2xl space-y-3 p-6" aria-label="Loading integration settings">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-10 animate-pulse rounded bg-pine-950/10" />
+          <div key={i} className="h-10 animate-pulse rounded bg-ink/10" />
         ))}
         <span className="sr-only">Loading integration settings…</span>
       </div>
@@ -781,19 +781,19 @@ function IntegrationsSection() {
         <div>
           <p className="label">Hotel public id</p>
           <p className="flex items-center gap-2">
-            <code className="rounded bg-pine-950/5 px-2 py-1 font-mono text-sm">{s.public_id}</code>
-            <button type="button" className="text-sm font-medium text-pine-700 underline" onClick={() => copy(s.public_id, "public id")}>
+            <code className="rounded bg-mist px-2 py-1 font-mono text-sm">{s.public_id}</code>
+            <button type="button" className="text-sm font-medium text-deep-teal underline" onClick={() => copy(s.public_id, "public id")}>
               Copy
             </button>
           </p>
         </div>
         <div>
           <p className="label">Embed snippet</p>
-          <pre className="overflow-x-auto rounded-lg bg-pine-950 p-3 font-mono text-xs text-white">{snippet}</pre>
-          <button type="button" className="mt-2 text-sm font-medium text-pine-700 underline" onClick={() => copy(snippet, "snippet")}>
+          <pre className="overflow-x-auto rounded-lg bg-ink p-3 font-mono text-xs text-white">{snippet}</pre>
+          <button type="button" className="mt-2 text-sm font-medium text-deep-teal underline" onClick={() => copy(snippet, "snippet")}>
             Copy snippet
           </button>{" "}
-          <a className="text-sm font-medium text-pine-700 underline" href={demoUrl} target="_blank" rel="noreferrer">
+          <a className="text-sm font-medium text-deep-teal underline" href={demoUrl} target="_blank" rel="noreferrer">
             Open the widget demo page
           </a>
           {copied && (
@@ -824,13 +824,13 @@ function IntegrationsSection() {
           )}
         </p>
         {newSecret && (
-          <div role="alert" className="rounded-lg border border-brass-500/60 bg-brass-100/40 p-3 text-sm">
+          <div role="alert" className="rounded-lg border border-sun bg-sun/15 p-3 text-sm">
             <p className="font-semibold">New integration secret — copy it now, it will not be shown again:</p>
             <code className="mt-1 block break-all font-mono text-xs">{newSecret}</code>
-            <button type="button" className="mt-2 font-medium text-pine-700 underline" onClick={() => copy(newSecret, "secret")}>
+            <button type="button" className="mt-2 font-medium text-deep-teal underline" onClick={() => copy(newSecret, "secret")}>
               Copy secret
             </button>{" "}
-            <button type="button" className="font-medium text-pine-700 underline" onClick={() => setNewSecret(null)}>
+            <button type="button" className="font-medium text-deep-teal underline" onClick={() => setNewSecret(null)}>
               Dismiss
             </button>
           </div>
@@ -839,7 +839,7 @@ function IntegrationsSection() {
           {rotateSecret.isPending ? "Generating…" : s.has_integration_secret ? "Rotate secret" : "Generate secret"}
         </button>
 
-        <div className="border-t border-pine-950/10 pt-4">
+        <div className="border-t border-line pt-4">
           <p className="label">Outbound webhook URL (optional, for async responses)</p>
           <div className="flex gap-2">
             <input
@@ -858,10 +858,10 @@ function IntegrationsSection() {
             <strong>{s.has_webhook_secret ? "configured" : "not generated"}</strong>
           </p>
           {newWebhookSecret && (
-            <div role="alert" className="mt-2 rounded-lg border border-brass-500/60 bg-brass-100/40 p-3 text-sm">
+            <div role="alert" className="mt-2 rounded-lg border border-sun bg-sun/15 p-3 text-sm">
               <p className="font-semibold">New webhook signing secret — copy it now:</p>
               <code className="mt-1 block break-all font-mono text-xs">{newWebhookSecret}</code>
-              <button type="button" className="mt-2 font-medium text-pine-700 underline" onClick={() => setNewWebhookSecret(null)}>
+              <button type="button" className="mt-2 font-medium text-deep-teal underline" onClick={() => setNewWebhookSecret(null)}>
                 Dismiss
               </button>
             </div>

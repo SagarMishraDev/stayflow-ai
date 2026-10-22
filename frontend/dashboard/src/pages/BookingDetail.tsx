@@ -169,7 +169,7 @@ export default function BookingDetail() {
                 {quoteQuery.isLoading ? (
                   <div aria-busy="true" className="space-y-2">
                     {[0, 1, 2].map((i) => (
-                      <div key={i} className="h-8 animate-pulse rounded bg-pine-950/10" />
+                      <div key={i} className="h-8 animate-pulse rounded bg-ink/10" />
                     ))}
                     <span className="sr-only">Loading price breakdown…</span>
                   </div>
@@ -202,7 +202,7 @@ export default function BookingDetail() {
                             <td>{formatDate(n.date)}</td>
                             <td className="text-right font-mono tabular-nums">
                               {n.price === null ? (
-                                <span className="text-brick-600">no rate set</span>
+                                <span className="text-coral-deep">no rate set</span>
                               ) : (
                                 formatMoney(n.price, quoteQuery.data.currency)
                               )}
@@ -223,7 +223,7 @@ export default function BookingDetail() {
                       </tfoot>
                     </table>
                     {!quoteQuery.data.fully_priced && (
-                      <p className="mt-2 text-sm text-brick-600">
+                      <p className="mt-2 text-sm text-coral-deep">
                         {quoteQuery.data.missing_dates.length} night(s) have no
                         configured rate; the total is partial.
                       </p>
@@ -253,7 +253,7 @@ export default function BookingDetail() {
                   <div className="flex flex-col gap-2">
                     {nextStatuses.map((s) =>
                       confirming === s ? (
-                        <div key={s} className="rounded-lg border border-brass-500/50 bg-brass-100/40 p-3">
+                        <div key={s} className="rounded-lg border border-sun bg-sun/15 p-3">
                           <p className="text-sm font-medium">
                             {s === "CANCELLED"
                               ? `Cancel booking #${booking.id}?`
@@ -312,7 +312,7 @@ export default function BookingDetail() {
                       <dd>
                         <Link
                           to={`/guests/${guestQuery.data.id}`}
-                          className="font-medium text-pine-700 underline"
+                          className="font-medium text-deep-teal underline"
                         >
                           {guestQuery.data.name}
                         </Link>

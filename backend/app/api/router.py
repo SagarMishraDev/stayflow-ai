@@ -2277,8 +2277,17 @@ def get_conversation_messages(
     current_user: HotelUser = Depends(get_current_user),
 ) -> list[MessageResponse]:
     _get_owned(db, Conversation, conversation_id, "Conversation not found", current_user)
+    # Guest-visible transcript only: the agent runner also persists its
+    # internal tool traces as TOOL_CALL / TOOL_RESULT rows (they belong to
+    # the agent's own history, rebuilt in app/agent/runner.py) — staff must
+    # never see that raw tool JSON in the dashboard.
     return db.scalars(
-        select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id)
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.message_type == "TEXT",
+        )
+        .order_by(Message.id)
     ).all()
 
 

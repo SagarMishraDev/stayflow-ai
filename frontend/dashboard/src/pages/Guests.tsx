@@ -107,7 +107,7 @@ export function Guests() {
                       <td>{g.nationality ?? "—"}</td>
                       <td>{g.is_active ? "Yes" : "No"}</td>
                       <td>
-                        <Link to={`/guests/${g.id}`} className="font-medium text-pine-700 underline">
+                        <Link to={`/guests/${g.id}`} className="font-medium text-deep-teal underline">
                           Open
                         </Link>
                       </td>
@@ -250,7 +250,7 @@ export function GuestDetail() {
                             <td><StatusBadge status={b.booking_status} /></td>
                             <td className="font-mono tabular-nums">{formatMoney(b.final_price)}</td>
                             <td>
-                              <Link to={`/bookings/${b.id}`} className="font-medium text-pine-700 underline">
+                              <Link to={`/bookings/${b.id}`} className="font-medium text-deep-teal underline">
                                 Open
                               </Link>
                             </td>
@@ -292,7 +292,7 @@ export function GuestDetail() {
               <section aria-label="Service requests" className="lg:col-span-1">
                 <h2 className="panel-title mb-3">Service requests</h2>
                 {requestsQuery.isLoading ? (
-                  <div aria-busy="true" className="h-16 animate-pulse rounded-xl bg-parchment" aria-label="Loading requests" />
+                  <div aria-busy="true" className="h-16 animate-pulse rounded-xl bg-mist" aria-label="Loading requests" />
                 ) : guestRequests.length === 0 ? (
                   <p className="panel p-4 text-sm text-ink/60">None yet.</p>
                 ) : (
@@ -311,7 +311,7 @@ export function GuestDetail() {
               <section aria-label="Conversations" className="lg:col-span-1">
                 <h2 className="panel-title mb-3">Conversations</h2>
                 {conversationsQuery.isLoading ? (
-                  <div aria-busy="true" className="h-16 animate-pulse rounded-xl bg-parchment" aria-label="Loading conversations" />
+                  <div aria-busy="true" className="h-16 animate-pulse rounded-xl bg-mist" aria-label="Loading conversations" />
                 ) : guestChats.length === 0 ? (
                   <p className="panel p-4 text-sm text-ink/60">None yet.</p>
                 ) : (
@@ -319,7 +319,7 @@ export function GuestDetail() {
                     {guestChats.map((c) => (
                       <li key={c.id} className="panel p-3 text-sm">
                         <p className="font-semibold">
-                          <Link to={`/conversations/${c.id}`} className="text-pine-700 underline">
+                          <Link to={`/conversations/${c.id}`} className="text-deep-teal underline">
                             Chat #{c.id}
                           </Link>
                         </p>

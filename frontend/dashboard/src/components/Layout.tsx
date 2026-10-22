@@ -23,8 +23,8 @@ const NAV: { to: string; label: string; roles?: ("staff" | "hotel_admin" | "supe
 
 function linkClass(active: boolean): string {
   return active
-    ? "block rounded-lg bg-pine-700 px-3 py-2 text-sm font-semibold text-white"
-    : "block rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white";
+    ? "block rounded-full bg-sun px-3.5 py-2 text-sm font-extrabold text-ink shadow-card"
+    : "block rounded-full px-3.5 py-2 text-sm font-semibold text-white/85 hover:bg-white/10 hover:text-white";
 }
 
 export default function Layout() {
@@ -48,18 +48,20 @@ export default function Layout() {
         Skip to content
       </a>
       {/* Sidebar */}
-      <aside className="bg-pine-950 text-white md:w-60 md:shrink-0 md:min-h-screen">
+      <aside className="bg-deep-teal text-white md:w-60 md:shrink-0 md:min-h-screen">
         <div className="flex items-center justify-between px-4 py-4">
           <Link to="/" className="flex items-center gap-2.5">
             <span
               aria-hidden
-              className="grid h-9 w-9 place-items-center rounded-full bg-brass-500 font-mono text-lg font-semibold text-pine-950"
+              className="grid h-9 w-9 place-items-center rounded-xl bg-sun font-display text-xl font-bold text-ink ring-2 ring-inset ring-ink"
             >
               S
             </span>
             <span className="leading-tight">
-              <span className="block font-bold tracking-tight">StayFlow Ops</span>
-              <span className="block text-xs text-white/60">Staff console</span>
+              <span className="block font-display text-[1.4rem] font-bold uppercase leading-none tracking-wide">
+                StayFlow Ops
+              </span>
+              <span className="block text-xs text-white/70">Staff console</span>
             </span>
           </Link>
         </div>
@@ -74,7 +76,7 @@ export default function Layout() {
                 >
                   {item.label}
                   {item.to === "/notifications" && unread > 0 && (
-                    <span className="ml-2 rounded-full bg-brass-500 px-2 py-0.5 text-xs font-bold text-pine-950">
+                    <span className="ml-2 rounded-full bg-coral-deep px-2 py-0.5 text-xs font-bold text-white">
                       {unread}
                     </span>
                   )}
@@ -89,7 +91,7 @@ export default function Layout() {
           <button
             type="button"
             onClick={logout}
-            className="mt-2 rounded-lg border border-white/25 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/10"
+            className="mt-2 rounded-full border border-white/25 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-white/10"
           >
             Sign out
           </button>
@@ -98,7 +100,7 @@ export default function Layout() {
 
       {/* Main column */}
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-20 border-b border-pine-950/15 bg-paper/95 backdrop-blur">
+        <header className="sticky top-0 z-20 border-b border-line bg-paper/95 backdrop-blur">
           <div className="flex items-center gap-3 px-4 py-3 md:px-8">
             <div className="min-w-0 flex-1">
               {isSuperAdmin && hotels && hotels.length > 1 ? (
@@ -146,7 +148,7 @@ export default function Layout() {
                 <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
               </svg>
               {unread > 0 && (
-                <span className="absolute -right-1 -top-1 rounded-full bg-brick-600 px-1.5 text-[11px] font-bold text-white">
+                <span className="absolute -right-1 -top-1 rounded-full bg-coral-deep px-1.5 text-[11px] font-bold text-white">
                   {unread}
                 </span>
               )}

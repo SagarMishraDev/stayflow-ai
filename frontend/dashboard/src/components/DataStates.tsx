@@ -32,7 +32,7 @@ export function ListState<T>({
         {Array.from({ length: skeletonRows }).map((_, i) => (
           <div
             key={i}
-            className="h-14 animate-pulse rounded-xl border border-pine-950/10 bg-parchment"
+            className="h-14 animate-pulse rounded-xl border border-line bg-mist"
           />
         ))}
         <span className="sr-only">Loading…</span>
@@ -85,8 +85,8 @@ export function DetailState({
   if (isLoading) {
     return (
       <div aria-busy="true" aria-label="Loading" className="space-y-3">
-        <div className="h-8 w-1/3 animate-pulse rounded bg-pine-950/10" />
-        <div className="h-48 animate-pulse rounded-xl border border-pine-950/10 bg-parchment" />
+        <div className="h-8 w-1/3 animate-pulse rounded bg-ink/10" />
+        <div className="h-48 animate-pulse rounded-xl border border-line bg-mist" />
         <span className="sr-only">Loading…</span>
       </div>
     );
@@ -119,7 +119,7 @@ export function NotAvailableNotice({ children }: { children: ReactNode }) {
     <div
       role="note"
       aria-label="Feature not available"
-      className="rounded-xl border border-brass-500/50 bg-brass-100/40 p-4 text-sm"
+      className="rounded-xl border border-sun bg-sun/15 p-4 text-sm"
     >
       <p className="font-semibold">Not available in the staff API</p>
       <div className="mt-1 text-ink/80">{children}</div>
@@ -139,7 +139,7 @@ export function PageHeader({
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <h1 className="text-3xl font-bold leading-none">{title}</h1>
         {description && <p className="mt-1 text-sm text-ink/70">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}

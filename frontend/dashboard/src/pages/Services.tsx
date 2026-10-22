@@ -78,8 +78,8 @@ export default function Services() {
               aria-pressed={categoryFilter === c}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                 categoryFilter === c
-                  ? "bg-pine-950 text-white"
-                  : "border border-pine-950/25 bg-parchment hover:bg-pine-50"
+                  ? "bg-deep-teal text-white"
+                  : "border border-line bg-paper hover:bg-mist"
               }`}
             >
               {c === "ALL" ? "All" : c}
@@ -131,7 +131,7 @@ export default function Services() {
                       <td className="whitespace-nowrap">
                         <button
                           type="button"
-                          className="mr-3 font-medium text-pine-700 underline"
+                          className="mr-3 font-medium text-deep-teal underline"
                           onClick={() => {
                             setEditing(s);
                             setShowModal(true);
@@ -141,7 +141,7 @@ export default function Services() {
                         </button>
                         <button
                           type="button"
-                          className="font-medium text-brick-600 underline"
+                          className="font-medium text-coral-deep underline"
                           onClick={() => onDelete(s)}
                           disabled={remove.isPending}
                         >

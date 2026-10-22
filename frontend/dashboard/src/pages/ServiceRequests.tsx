@@ -89,13 +89,13 @@ export default function ServiceRequests() {
               <section
                 key={col}
                 aria-label={`${col.replace(/_/g, " ")} requests`}
-                className="rounded-xl border border-pine-950/15 bg-pine-50/50 p-3"
+                className="rounded-xl border border-line bg-mist/50 p-3"
               >
                 <h2 className="mb-3 flex items-center justify-between px-1">
                   <span className="text-sm font-semibold">
                     {col.charAt(0) + col.slice(1).toLowerCase().replace(/_/g, " ")}
                   </span>
-                  <span className="rounded-full bg-pine-950/10 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums">
+                  <span className="rounded-full bg-ink/10 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums">
                     {(grouped.get(col) ?? []).length}
                   </span>
                 </h2>
@@ -110,7 +110,7 @@ export default function ServiceRequests() {
                     />
                   ))}
                   {(grouped.get(col) ?? []).length === 0 && (
-                    <li className="rounded-lg border border-dashed border-pine-950/20 p-3 text-center text-xs text-ink/50">
+                    <li className="rounded-lg border border-dashed border-line p-3 text-center text-xs text-ink/50">
                       Empty
                     </li>
                   )}
@@ -144,9 +144,9 @@ function RequestCard({
   onEdit: () => void;
 }) {
   return (
-    <li className="rounded-lg border border-pine-950/15 bg-parchment p-3">
+    <li className="rounded-lg border border-line bg-paper p-3">
       <p className="text-sm font-semibold">
-        <Link to={`/guests/${request.guest_id}`} className="text-pine-700 underline">
+        <Link to={`/guests/${request.guest_id}`} className="text-deep-teal underline">
           {guest}
         </Link>
       </p>
@@ -162,7 +162,7 @@ function RequestCard({
       <button
         type="button"
         onClick={onEdit}
-        className="mt-2 text-xs font-semibold text-pine-700 underline"
+        className="mt-2 text-xs font-semibold text-deep-teal underline"
       >
         Update status
       </button>

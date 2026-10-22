@@ -4,15 +4,26 @@
 # guest chat, widget, API and the staff dashboard all served by
 # app.demo_main (see Dockerfile.demo + docs/DEMO_DEPLOY.md).
 #
-# WHY ENVIRONMENT=demo (not production): app/core/config.py refuses to
-# boot with ENVIRONMENT=production unless production secrets are set
-# (Telegram/Twilio tokens), DATABASE_URL is PostgreSQL (SQLite is
-# rejected) — by design. This free demo intentionally runs the mock LLM
-# on a throwaway SQLite database, so it uses the non-production "demo"
-# environment. Do NOT reuse this blueprint for real production data.
+# The demo now runs the REAL stack: the Mercury LLM (Inception) and a
+# persistent Neon PostgreSQL database. DATABASE_URL and
+# INCEPTION_API_KEY are declared with `sync: false` — their values are
+# set in the Render dashboard only and are never stored in this repo:
+#   - DATABASE_URL      the Neon DIRECT connection string (pooling off)
+#   - INCEPTION_API_KEY the Inception Labs (Mercury) API key
+# On first boot against the empty Neon database the wrapper runs the
+# Alembic migrations to head and seeds the demo hotel (DEMO_SEED=1);
+# after that, data persists across restarts and redeploys.
 #
-# Demo login (DEMO-ONLY, seeded on first boot, change nothing — it is a
-# throwaway demo account on throwaway data):
+# WHY ENVIRONMENT=demo (not production): app/core/config.py refuses to
+# boot with ENVIRONMENT=production unless the production secrets are
+# set (Telegram/Twilio tokens etc.) — by design. This public demo does
+# not run the messaging bots, so it uses the non-production "demo"
+# environment. Do NOT reuse this blueprint for a real production
+# deployment without switching ENVIRONMENT and providing every
+# production secret.
+#
+# Demo login (DEMO-ONLY, seeded on first boot — a throwaway demo
+# account on demo data):
 #   email    admin@stayflowgrand.example
 #   password is the SEED_ADMIN_PASSWORD value below (demo-only)
 
@@ -29,17 +40,24 @@ services:
       - key: ENVIRONMENT
         value: demo
       - key: LLM_PROVIDER
-        value: mock
+        value: inception
       - key: AGENT_PROVIDER
-        value: mock
+        value: inception
       - key: EMBEDDING_PROVIDER
         value: hashed
       - key: JWT_SECRET_KEY
         generateValue: true
+      - key: INCEPTION_API_KEY
+        # Set in the Render dashboard (Inception Labs Mercury key).
+        # Never commit the value; without it the app refuses to start
+        # (fail-fast provider validation in app/main.py).
+        sync: false
       - key: DATABASE_URL
-        # Ephemeral on the free plan: the demo re-seeds itself on every
-        # fresh boot (DEMO_SEED=1), so data loss on restart is expected
-        # and harmless for a demo.
-        value: sqlite:////tmp/stayflow-demo.db
+        # Set in the Render dashboard: the Neon DIRECT connection
+        # string (connection pooling OFF), e.g.
+        # postgresql://<user>:<password>@<host>/<db>?sslmode=require
+        # The app normalizes it to the psycopg v3 driver automatically.
+        # Data persists in Neon across restarts/redeploys.
+        sync: false
       - key: SEED_ADMIN_PASSWORD
         value: Preview@123

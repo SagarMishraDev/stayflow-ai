@@ -5,6 +5,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_JWT_SECRET = "dev-only-insecure-secret-change-me-in-production"
 
+
+def normalize_database_url(url: str) -> str:
+    """Return a SQLAlchemy-ready database URL.
+
+    Managed Postgres providers (Neon, Supabase, Heroku-style add-ons) hand
+    out bare ``postgres://`` / ``postgresql://`` URLs, but this project
+    ships psycopg v3 only (no psycopg2), so SQLAlchemy needs the explicit
+    ``postgresql+psycopg://`` driver. Already-qualified URLs
+    (``postgresql+psycopg://``, ``postgresql+asyncpg://``, ``sqlite:///``
+    …) pass through untouched, query parameters included
+    (``?sslmode=require`` survives).
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    return url
+
+
 # Secrets that must be explicitly configured (non-empty) in production.
 # Maps the Settings field name to a short fix hint shown in the error message.
 _PROD_REQUIRED_SECRETS: dict[str, str] = {
@@ -149,6 +168,15 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        # The single normalization point: the app engine (app/database.py),
+        # the Alembic env (alembic/env.py) and the demo bootstrap
+        # (app/demo_bootstrap.py) all read settings.database_url, so they
+        # all see the same driver-qualified URL.
+        return normalize_database_url(value)
 
     @field_validator("embedding_provider")
     @classmethod
