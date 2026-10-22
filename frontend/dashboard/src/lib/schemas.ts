@@ -132,9 +132,15 @@ export const hotelSchema = z.object({
   address: z.string().optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),
   email: z.string().email("Enter a valid email").optional().or(z.literal("")),
-  timezone: z.string().min(1).default("Asia/Kolkata"),
-  currency: z.string().min(1).max(10).default("INR"),
-  is_active: z.boolean().default(true),
+  // NOTE: timezone/currency must NOT be `min(1).default(...)`: the profile
+  // form submits "" for a cleared input, and zod defaults only apply to
+  // `undefined` — a `min(1)` here silently blocked EVERY profile save whose
+  // timezone/currency inputs were left untouched ("" failed validation and
+  // the submit handler never ran). The submit handler falls back to the
+  // hotel's current values for blank fields instead.
+  timezone: z.string().optional().or(z.literal("")),
+  currency: z.string().max(10).optional().or(z.literal("")),
+  is_active: z.boolean().optional(),
 });
 export type HotelForm = z.input<typeof hotelSchema>;
 

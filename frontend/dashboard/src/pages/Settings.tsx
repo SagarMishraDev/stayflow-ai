@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useAuth } from "../lib/auth";
@@ -29,7 +29,7 @@ import {
 } from "../lib/schemas";
 import { ListState, PageHeader } from "../components/DataStates";
 import { Field, FormError, Modal, TextInput } from "../components/Form";
-import type { Faq, Offer, Policy } from "../lib/types";
+import type { Faq, Hotel, Offer, Policy } from "../lib/types";
 import { policySchema, type PolicyForm } from "../lib/schemas";
 
 type Tab = "profile" | "policies" | "faqs" | "offers" | "integrations";
@@ -82,19 +82,49 @@ export default function Settings() {
 
 /* ------------------------------ Profile ------------------------------ */
 
+/** Map a loaded hotel onto the profile form's fields (real input values,
+ * not placeholders — an earlier version left every input empty with the
+ * current value as a placeholder only, which both confused validation and
+ * forced users to retype unchanged fields). */
+function hotelFormValues(hotel: Hotel): HotelForm {
+  return {
+    name: hotel.name,
+    description: hotel.description ?? "",
+    city: hotel.city,
+    address: hotel.address ?? "",
+    phone: hotel.phone ?? "",
+    email: hotel.email ?? "",
+    check_in_time: hotel.check_in_time ?? "",
+    check_out_time: hotel.check_out_time ?? "",
+    timezone: hotel.timezone,
+    currency: hotel.currency,
+  };
+}
+
 function ProfileSection({ hotelId }: { hotelId: number }) {
   const hotelQuery = useHotel(hotelId);
   const update = useUpdate((id) => `/hotels/${id}`, [[ "hotel", hotelId ], ["hotels"]]);
   const [serverError, setServerError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  const hotel = hotelQuery.data;
+  // Prefill the form with the hotel's current values once loaded, and keep
+  // it in sync after saves/refetches without stomping fields the user is
+  // in the middle of editing (keepDirtyValues).
+  const formValues = useMemo<HotelForm | undefined>(
+    () => (hotel ? hotelFormValues(hotel) : undefined),
+    [hotel],
+  );
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<HotelForm>({ resolver: zodResolver(hotelSchema) });
-
-  const hotel = hotelQuery.data;
+  } = useForm<HotelForm>({
+    resolver: zodResolver(hotelSchema),
+    values: formValues,
+    resetOptions: { keepDirtyValues: true },
+  });
   if (hotelQuery.isLoading) {
     return (
       <div aria-busy="true" className="panel max-w-2xl space-y-3 p-6" aria-label="Loading hotel profile">
@@ -122,25 +152,40 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
     setSaved(false);
     const keep = (v: string | undefined, current: string | null | undefined) =>
       v && v.trim() ? v.trim() : (current ?? null);
+    // Blank nullable fields keep their current value (see the hint above
+    // the form). is_active is not editable in this form, so it is always
+    // sent as the hotel's current value — never a form/schema default.
+    const payload = {
+      name: values.name?.trim() || hotel.name,
+      description: keep(values.description, hotel.description),
+      city: values.city?.trim() || hotel.city,
+      address: keep(values.address, hotel.address),
+      phone: keep(values.phone, hotel.phone),
+      email: keep(values.email, hotel.email),
+      check_in_time: keep(values.check_in_time, hotel.check_in_time),
+      check_out_time: keep(values.check_out_time, hotel.check_out_time),
+      timezone: values.timezone?.trim() || hotel.timezone,
+      currency: values.currency?.trim() || hotel.currency,
+      is_active: hotel.is_active,
+    };
     try {
-      await update.mutateAsync({
-        id: hotelId,
-        data: {
-          name: values.name?.trim() || hotel.name,
-          description: keep(values.description, hotel.description),
-          city: values.city?.trim() || hotel.city,
-          address: keep(values.address, hotel.address),
-          phone: keep(values.phone, hotel.phone),
-          email: keep(values.email, hotel.email),
-          check_in_time: keep(values.check_in_time, hotel.check_in_time),
-          check_out_time: keep(values.check_out_time, hotel.check_out_time),
-          timezone: values.timezone?.trim() || hotel.timezone,
-          currency: values.currency?.trim() || hotel.currency,
-          is_active: values.is_active ?? hotel.is_active,
-        },
-      });
+      await update.mutateAsync({ id: hotelId, data: payload });
       setSaved(true);
-      reset();
+      // Mark the form clean with exactly what was saved, so the inputs
+      // show the persisted values (the invalidation refetch then confirms
+      // the same state from the server).
+      reset({
+        name: payload.name,
+        description: payload.description ?? "",
+        city: payload.city,
+        address: payload.address ?? "",
+        phone: payload.phone ?? "",
+        email: payload.email ?? "",
+        check_in_time: payload.check_in_time ?? "",
+        check_out_time: payload.check_out_time ?? "",
+        timezone: payload.timezone,
+        currency: payload.currency,
+      });
     } catch (e) {
       setServerError(apiErrorMessage(e));
     }
@@ -149,8 +194,8 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="panel max-w-2xl space-y-4 p-6" noValidate>
       <p className="text-sm text-ink/60">
-        Fields you leave blank keep their current value. Current values are
-        shown in the placeholders.
+        Your current details are prefilled below — edit any of them and
+        save. Clearing a field keeps its current value.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Hotel name" htmlFor="h-name" error={errors.name?.message}>
@@ -160,7 +205,7 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
           <TextInput id="h-city" name="city" register={register} placeholder={hotel.city} />
         </Field>
       </div>
-      <Field label="Description" htmlFor="h-desc">
+      <Field label="Description" htmlFor="h-desc" error={errors.description?.message}>
         <textarea id="h-desc" className="input" rows={3} placeholder={hotel.description ?? ""} {...register("description")} />
       </Field>
       <Field label="Address" htmlFor="h-addr">
@@ -183,10 +228,10 @@ function ProfileSection({ hotelId }: { hotelId: number }) {
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Timezone" htmlFor="h-tz">
+        <Field label="Timezone" htmlFor="h-tz" error={errors.timezone?.message}>
           <TextInput id="h-tz" name="timezone" register={register} placeholder={hotel.timezone} />
         </Field>
-        <Field label="Currency" htmlFor="h-cur">
+        <Field label="Currency" htmlFor="h-cur" error={errors.currency?.message}>
           <TextInput id="h-cur" name="currency" register={register} placeholder={hotel.currency} />
         </Field>
       </div>

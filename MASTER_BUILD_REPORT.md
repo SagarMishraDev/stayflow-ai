@@ -769,3 +769,60 @@ mandated recipe: **233 passed / 2 failed / 2 deselected** vs baseline
 zero regressions. Ruff check + format clean. Not yet pushed/deployed —
 first live boot on Render + Neon is the final verification (watch the
 first DB request after a >5 min idle gap).
+
+---
+
+## Addendum — Hotel Settings profile save silently persisted nothing (2026-10-23)
+
+**Symptom (live, browser-verified):** Dashboard → Hotel Settings → Hotel
+profile: filling Address/Phone/Email/Check-in/Check-out and clicking
+"Save changes" produced no confirmation, no error, and no persistence —
+after reload the fields were still empty. The PATCH was never sent.
+
+**Root cause (frontend only; the backend endpoint was verified correct):**
+the profile form in `Settings.tsx` was never prefilled — `useForm` had no
+`defaultValues`/`values`, so every input rendered empty with the current
+value as a mere placeholder. On submit, react-hook-form collects `""` for
+every untouched input, including **Timezone** and **Currency**. In
+`lib/schemas.ts`, those two fields were
+`z.string().min(1).default(...)` — and zod `.default()` applies only to
+`undefined`, never to `""` — so `""` failed `min(1)`, `handleSubmit`
+blocked the submit, and `onSubmit` (and therefore the API call) never ran.
+The failure was invisible because the Timezone/Currency (and Description)
+`<Field>` elements were rendered **without** the `error` prop, so the
+validation errors were never displayed. Reproduced exactly against the
+schema in node: the filled-form submission fails only on
+`timezone`/`currency`. (The endpoint itself was proven sound: the
+pre-existing CRUD test's PATCH step passes, and the failure there is a
+later, unrelated SQLite-env DELETE-409 expectation.)
+
+**Fix:**
+- `frontend/dashboard/src/pages/Settings.tsx` — `ProfileSection` now
+  prefills the form with the hotel's current values as real input values
+  (RHF `values` + `resetOptions: { keepDirtyValues: true }`, memoized
+  `hotelFormValues()` mapping); every field's validation error is wired
+  to its `<Field>` (description/timezone/currency included), so a blocked
+  save can never be silent again; on success the existing "Hotel profile
+  saved." banner fires and the form resets to exactly what was saved;
+  `is_active` is sent as the hotel's current value (the form has no
+  toggle) instead of the zod-parsed value, whose `.default(true)` could
+  have silently reactivated a deactivated hotel.
+- `frontend/dashboard/src/lib/schemas.ts` — `hotelSchema.timezone` /
+  `currency` changed from `min(1).default(...)` to
+  `optional().or(z.literal(""))`, consistent with the sibling fields (the
+  submit handler already falls back to the hotel's current value for
+  blanks); `is_active` is now `optional()` with no phantom default.
+  Verified in node: the previously-blocking submission now parses, while
+  an empty name and a malformed HH:MM time are still rejected.
+
+**Tests:** new `backend/tests/test_hotel_profile_update.py` (2 tests) —
+PATCH the full profile (address, phone, email, check_in_time,
+check_out_time) and prove persistence via the PATCH response, a fresh
+GET, and the database row itself; malformed times are rejected with 422
+and leave stored values untouched. Full suite, mandated recipe:
+**235 passed / 2 failed / 2 deselected** vs baseline 233/2/2 — the 2
+failures are the same pre-existing SQLite-env ones, zero regressions.
+Ruff check + format clean. Frontend `npm run build` and
+`npm run build:demo` (incl. `tsc --noEmit`) both pass. Not
+pushed/deployed — the parent releases; live re-verification is a browser
+save on Hotel Settings after deploy.
