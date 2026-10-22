@@ -67,6 +67,11 @@ WORKDIR /app/backend
 
 COPY --from=builder /app/.venv /app/backend/.venv
 
+# Sanity: the venv must be runnable from its new location. Console scripts
+# (bin/uvicorn) embed the BUILDER's venv path in their shebang and break
+# when the venv is relocated — the CMD below therefore uses `python -m`.
+RUN /app/backend/.venv/bin/python -m uvicorn --version
+
 # App code + alembic (kept for parity/debugging) + seed scripts (the demo
 # wrapper runs scripts/seed_demo.py when DEMO_SEED=1).
 COPY backend/app ./app
@@ -84,4 +89,4 @@ EXPOSE 8000
 # DEMO_SEED=1 (set in render.yaml / your env file) makes the wrapper seed
 # the demo hotel on first boot. $PORT is provided by the host (Render);
 # it defaults to 8000 for a plain `docker run`.
-CMD ["sh", "-c", "uvicorn app.demo_main:app --app-dir /app/backend --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec /app/backend/.venv/bin/python -m uvicorn app.demo_main:app --app-dir /app/backend --host 0.0.0.0 --port ${PORT:-8000}"]
