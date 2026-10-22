@@ -721,3 +721,51 @@ pre-existing SQLite-env ones (`test_hotel_crud_and_validation`,
 regressions; +10 new tests (1 prompt, 6 telegram, 3 embeddings).
 `ruff check` + `ruff format --check` clean. Dashboard untouched (no
 rebuild needed); landing change is JS-only plus one new asset.
+
+---
+
+## Addendum — DB request hangs on Render + Neon (2026-10-23)
+
+**Symptom (live):** DB-backed requests (login, chat) hung forever on the
+Render + Neon deployment while non-DB routes (health, static) answered
+instantly. Render logs showed the hung requests producing **zero
+errors** — they never failed, they just never returned. When Neon
+force-terminated one connection (`psycopg AdminShutdown`), that request
+500'd and subsequent requests on fresh connections worked again —
+pointing at dead pooled connections, not app logic. Ruled out by the
+logs/timing: the in-memory rate limiter (instant), argon2 hashing, and
+the LLM call.
+
+**Root cause:** `backend/app/database.py` created the engine bare —
+`create_engine(settings.database_url)` with no `pool_pre_ping`, no
+`pool_recycle`, no timeouts anywhere. Neon is serverless: its compute
+suspends after ~5 idle minutes and kills/recycles open connections,
+while the app process stays awake (health checks do not touch the DB),
+so the pool filled with dead psycopg sockets. The next DB request
+checked out a dead connection, sent its query into the void, and waited
+forever.
+
+**Fix (`backend/app/database.py` only):** a small `_engine_options(url)`
+helper applies hardening for PostgreSQL URLs only (SQLite/test behaviour
+byte-identical): `pool_pre_ping=True` (dead pooled connections are
+detected and replaced before use), `pool_recycle=180` (recycle every
+3 min, inside Neon's idle window), and psycopg v3 `connect_args` —
+`connect_timeout=10`, TCP keepalives (`keepalives=1`,
+`keepalives_idle=60`, `keepalives_interval=10`, `keepalives_count=5`),
+and `options="-c statement_timeout=60000"` so a stuck query fails
+server-side in 60 s instead of hanging forever. `app/database.py` is the
+single engine creation point (`app/db/session.py` imports this engine);
+Alembic's `env.py` one-shot engine is intentionally untouched (it opens
+a fresh connection per migration run, so pooling hazards do not apply).
+`test_connection()` unchanged and working.
+
+**Tests:** 5 new tests in `backend/tests/test_database.py` — SQLite URLs
+get no options; PostgreSQL options carry the exact pre-ping/recycle/
+timeout/keepalive values; a lazily-created PostgreSQL engine's pool
+introspects as `_pre_ping=True`, `_recycle=180` (no live connection);
+the app's SQLite engine still executes against the e2e DB. Full suite,
+mandated recipe: **233 passed / 2 failed / 2 deselected** vs baseline
+228/2/2 — the 2 failures are the same pre-existing SQLite-env ones,
+zero regressions. Ruff check + format clean. Not yet pushed/deployed —
+first live boot on Render + Neon is the final verification (watch the
+first DB request after a >5 min idle gap).
