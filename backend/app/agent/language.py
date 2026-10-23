@@ -10,10 +10,15 @@ language *and script*:
 Detection is fully deterministic and server-side (no external API, no
 LLM call): it scores Devanagari characters, Roman-Hindi vocabulary and
 English vocabulary in the guest's latest message. Explicit requests
-("please reply in English", "हिंदी में जवाब दो") always win. Short
-neutral messages (dates, numbers, "ok", names) are ``NEUTRAL`` so the
-caller can fall back to the conversation's established preference
-instead of flipping language on every "yes".
+("please reply in English", "हिंदी में जवाब दो") always win. Detection
+is confidence-tiered: only a *confident* signal (Devanagari script, a
+Hindi-vocabulary majority, or English vocabulary backed by grammar
+words) classifies a message. Weak or tied evidence — a lone English word inside
+a Hinglish slot reply ("Deluxe King Room chalega"), dates, numbers,
+"ok", names — is ``NEUTRAL`` so the caller falls back to the
+conversation's established preference instead of flipping language on
+every short reply. Only confident detections may override the stored
+preference; the preference merely breaks ties for ambiguous messages.
 
 The runner threads the result into the system prompt (for real LLMs)
 and into ``ProviderContext.response_language`` (for the deterministic
@@ -54,6 +59,20 @@ class LanguageDetection:
 _DEVANAGARI_RE = re.compile(r"[ऀ-ॿ]")
 _LETTER_RE = re.compile(r"[A-Za-zऀ-ॿ]")
 _WORD_RE = re.compile(r"[a-z]+(?:'[a-z]+)?")
+
+# A name introduced by a lead-in ("my name is …", "mera naam …",
+# "मेरा नाम …") is neutral evidence: guests write their name in either
+# script whatever language the conversation runs in, so the name tokens
+# themselves must not score as language evidence (a Devanagari name in
+# an English sentence is not a switch to Hindi). The lead-in is kept —
+# its language *is* evidence — only the name tokens are stripped before
+# scoring.
+_NAME_SPAN_RE = re.compile(
+    r"(my name is|mera naam|मेरा नाम|this is|i am|i'm|myself)"
+    r"\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.\-']*"
+    r"(?:\s+[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.\-']*){0,3}",
+    re.IGNORECASE,
+)
 
 # Roman-Hindi vocabulary common in guest messages (roman script). Hotel
 # words shared with English (hotel, room, booking) are deliberately NOT
@@ -155,6 +174,56 @@ _ROMAN_HINDI_WORDS = {
     "kr",
     "bhej",
     "bhejo",
+}
+
+# English *grammar* words (articles, pronouns, auxiliaries, prepositions,
+# question words). A confident English detection requires at least one of
+# these: English content words alone ("room", "guests", "price",
+# "booking") are everyday loanwords in Hinglish, so a telegraphic slot
+# reply like "Deluxe room chalega, 2 guests" must not count as an
+# English language switch.
+_ENGLISH_FUNCTION_WORDS = {
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "do",
+    "does",
+    "did",
+    "you",
+    "your",
+    "have",
+    "has",
+    "any",
+    "can",
+    "could",
+    "would",
+    "should",
+    "i",
+    "we",
+    "my",
+    "me",
+    "want",
+    "need",
+    "what",
+    "when",
+    "where",
+    "how",
+    "much",
+    "many",
+    "for",
+    "to",
+    "and",
+    "or",
+    "of",
+    "in",
+    "on",
+    "at",
+    "with",
+    "without",
 }
 
 _ENGLISH_WORDS = {
@@ -276,9 +345,10 @@ def detect_language(text: str) -> LanguageDetection:
                 explicit_request=language,
             )
 
-    devanagari = len(_DEVANAGARI_RE.findall(raw))
-    letters = len(_LETTER_RE.findall(raw))
-    lowered = raw.lower()
+    scored = _NAME_SPAN_RE.sub(r"\1", raw)
+    devanagari = len(_DEVANAGARI_RE.findall(scored))
+    letters = len(_LETTER_RE.findall(scored))
+    lowered = scored.lower()
     words = _WORD_RE.findall(lowered)
     hindi_hits = sum(1 for w in words if w in _ROMAN_HINDI_WORDS)
     english_hits = sum(1 for w in words if w in _ENGLISH_WORDS)
@@ -335,28 +405,38 @@ def detect_language(text: str) -> LanguageDetection:
             roman_hindi_hits=hindi_hits,
             english_hits=english_hits,
         )
-    if hindi_hits >= 1 and hindi_hits >= english_hits:
+    if hindi_hits > english_hits:
+        # A clear Hindi majority — even one unambiguous Hindi word against
+        # no English evidence — is a confident Hinglish signal.
         return LanguageDetection(
             DetectedLanguage.HINGLISH,
             ResponseLanguage.HINGLISH,
             roman_hindi_hits=hindi_hits,
             english_hits=english_hits,
         )
-    if hindi_hits >= 2:
-        return LanguageDetection(
-            DetectedLanguage.HINGLISH,
-            ResponseLanguage.HINGLISH,
-            roman_hindi_hits=hindi_hits,
-            english_hits=english_hits,
-        )
-    if english_hits >= 1 or len(words) >= 2:
+    english_function_hits = sum(1 for w in words if w in _ENGLISH_FUNCTION_WORDS)
+    if (
+        english_hits >= 2
+        and english_function_hits >= 1
+        and english_hits > hindi_hits
+    ):
+        # Confident English needs real evidence: at least two English
+        # vocabulary hits AND at least one grammar/function word. Content
+        # words alone ("room", "guests" inside the slot reply "Deluxe
+        # room chalega, 2 guests") are Hinglish loanwords, NOT a language
+        # switch — such weak signals stay NEUTRAL below so the
+        # conversation's established language breaks the tie instead of
+        # being overridden by them.
         return LanguageDetection(
             DetectedLanguage.ENGLISH,
             ResponseLanguage.ENGLISH,
             roman_hindi_hits=hindi_hits,
             english_hits=english_hits,
         )
-    # Single unknown word / date / number / "yes" / "ok": no signal.
+    # Weak or tied evidence (0–1 dictionary hits either way, or an exact
+    # Hindi/English tie), a single unknown word, a date, a number, "yes" /
+    # "ok": no confident signal — NEUTRAL, so resolution falls back to the
+    # conversation's history / stored preference.
     return LanguageDetection(
         DetectedLanguage.NEUTRAL,
         None,

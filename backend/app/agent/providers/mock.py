@@ -26,6 +26,7 @@ from app.agent.providers.base import (
     ProviderContext,
     ToolCallRequest,
 )
+from app.agent.query_terms import expand_query
 from app.agent.relative_dates import RelativeStay, resolve_relative_stay
 
 _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -64,10 +65,43 @@ _CONFIRM_RE = re.compile(
 )
 _GUEST_EMAIL_RE = re.compile(r"[\w.\-]+@[\w.\-]+\.\w+")
 _GUEST_PHONE_RE = re.compile(r"(\+?\d[\d\s\-]{6,}\d)")
+# Guest-name capture (Sweep fix C) must work across scripts: the lead-in
+# may be English ("my name is"), Roman Hindi ("mera naam") or Devanagari
+# ("मेरा नाम"), and the name itself may be Latin OR Devanagari whatever
+# language the conversation runs in — "मेरा नाम Test Guest है" previously
+# matched nothing at all. Up to four name-shaped tokens are captured
+# after the lead-in and trailing filler ("है", "hai", "and", …) is trimmed
+# by ``_clean_guest_name`` (the old regex also swallowed a trailing
+# "hai" into the stored name).
+_NAME_TOKEN = r"[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F.\-']*"
 _GUEST_NAME_RE = re.compile(
-    r"(?:my name is|mera naam|this is|i am|i'm)\s+"
-    r"([a-zA-Z][a-zA-Z\s.\-']{1,40}?)(?:\s*,|\s+and\s+|\s*$)",
+    r"(?:my name is|mera naam|मेरा नाम|this is|i am|i'm|myself)\s+"
+    r"(" + _NAME_TOKEN + r"(?:\s+" + _NAME_TOKEN + r"){0,3})",
     re.IGNORECASE,
+)
+# Words that end (or, as the first captured token, invalidate) a name:
+# sentence filler in English / Roman Hindi / Devanagari.
+_NAME_CUT_WORDS = frozenset(
+    {
+        "है", "हैं", "हूँ", "हूं", "hai", "hain", "h", "and", "aur",
+        "calling", "speaking", "regarding", "coming", "looking", "here",
+        "phone", "email",
+    }
+)
+# A bare-name reply ("Test Guest", "टेस्ट गेस्ट") is only accepted when
+# the whole message is 2–4 name-shaped words; these words prove the
+# message is something else (a room type, a flow answer, a greeting…).
+_BARE_NAME_STOPWORDS = frozenset(
+    {
+        "deluxe", "standard", "executive", "family", "suite", "premium",
+        "twin", "king", "queen", "room", "rooms", "book", "booking",
+        "cancel", "price", "rates", "hello", "namaste", "yes", "no",
+        "haan", "nahi", "ok", "okay", "thanks", "thank", "dhanyavaad",
+        "shukriya", "mujhe", "chahiye", "karna", "guests", "check",
+        "date", "dates", "kal", "parso", "aaj", "weekend", "pool",
+        "spa", "gym", "do", "log", "logo", "ke", "liye", "se", "tak",
+        "aur", "mera", "naam", "ek",
+    }
 )
 # Guest questions that belong to the hotel's unstructured knowledge base
 # (handbook, spa, dining, transfers, local guides) rather than to the SQL
@@ -458,11 +492,11 @@ def _modification_summary_text(data: dict[str, Any], lang: ResponseLanguage) -> 
             f"- Check-in: {old.get('check_in')} → {new.get('check_in')}",
             f"- Check-out: {old.get('check_out')} → {new.get('check_out')}",
             f"- Guests: {old.get('number_of_guests')} → {new.get('number_of_guests')}",
-            f"- Total price: {old.get('total_price')} {currency} → "
-            f"{new.get('total_price')} {currency} (difference {data.get('difference')})",
+            f"- Kul price: {old.get('total_price')} {currency} → "
+            f"{new.get('total_price')} {currency} (antar {data.get('difference')})",
         ]
         if due not in ("0", "0.00"):
-            lines.append(f"- Bakaya rashi (amount due): {due} {currency}")
+            lines.append(f"- Bakaya rashi: {due} {currency}")
         if refund not in ("0", "0.00"):
             lines.append(
                 f"- Refund due: {refund} {currency} — hamari team isse process karegi."
@@ -642,7 +676,7 @@ def _summarize(
                 f"- Room: {d.get('room_type')}\n"
                 f"- Check-in: {d.get('check_in')}, Check-out: {d.get('check_out')}\n"
                 f"- Guests: {d.get('number_of_guests')}\n"
-                f"- Total price: {d.get('total_price')} {d.get('currency', '')}\n"
+                f"- Kul price: {d.get('total_price')} {d.get('currency', '')}\n"
                 "Kya main ye booking confirm kar doon?"
             )
         return (
@@ -833,17 +867,66 @@ def _strip_date_mentions(text: str) -> str:
     return _MONTH_FIRST_DATE_RE.sub(" ", work)
 
 
-def _contact_args(text: str, hotel_id: int) -> dict[str, Any] | None:
-    """find_or_create_guest arguments parsed from a guest message, if any."""
+def _clean_guest_name(raw: str) -> str | None:
+    """Trim a captured name candidate: sentence filler ends the name.
+
+    "Test Guest है" -> "Test Guest"; "Test Guest hai" -> "Test Guest";
+    a candidate that *starts* with filler ("regarding my booking") is
+    not a name at all.
+    """
+    tokens: list[str] = []
+    for token in raw.split():
+        token = token.strip(".,!।")
+        if not token:
+            continue
+        if token.lower() in _NAME_CUT_WORDS:
+            break
+        tokens.append(token)
+    name = " ".join(tokens).strip(" .,-'")
+    if len(name) < 2 or len(name) > 60:
+        return None
+    return name
+
+
+def _bare_name(text: str) -> str | None:
+    """The guest's whole reply is just their name ("Test Guest",
+    "टेस्ट गेस्ट") — the usual answer when the bot asks for a name and
+    contact. Accepted only for 2–4 name-shaped words with no flow
+    vocabulary, so slot replies ("Deluxe room", "Do log") never leak in.
+    Only used when the message carries no email/phone either.
+    """
+    tokens = text.strip(" .,!।").split()
+    if not 2 <= len(tokens) <= 4:
+        return None
+    if any(re.fullmatch(_NAME_TOKEN, token) is None for token in tokens):
+        return None
+    if any(token.lower() in _BARE_NAME_STOPWORDS for token in tokens):
+        return None
+    return _clean_guest_name(text)
+
+
+def _contact_args(
+    text: str, hotel_id: int, *, allow_bare_name: bool = False
+) -> dict[str, Any] | None:
+    """find_or_create_guest arguments parsed from a guest message, if any.
+
+    ``allow_bare_name`` is set only by callers that are actively
+    collecting contact details (the bot just asked "your name and
+    phone/email?"), where a reply that is only a name is expected; in
+    general routing a bare 2–4 word message must not be read as identity.
+    """
     email_match = _GUEST_EMAIL_RE.search(text)
     # Dates in any supported format must not be mistaken for phone numbers.
     phone_match = _GUEST_PHONE_RE.search(_strip_date_mentions(text))
     name_match = _GUEST_NAME_RE.search(text)
-    if not (email_match or phone_match or name_match):
+    name = _clean_guest_name(name_match.group(1)) if name_match else None
+    if name is None and allow_bare_name and not email_match and not phone_match:
+        name = _bare_name(text)
+    if not (email_match or phone_match or name):
         return None
     args: dict[str, Any] = {"hotel_id": hotel_id}
-    if name_match:
-        args["name"] = name_match.group(1).strip()
+    if name:
+        args["name"] = name
     if email_match:
         args["email"] = email_match.group(0)
     if phone_match:
@@ -1330,7 +1413,11 @@ class MockProvider:
 
         # 7b. Hotel knowledge base (RAG): spa, dining, transfers, local
         # guides — unstructured knowledge, never prices/availability.
-        if any(w in lowered for w in _KNOWLEDGE_KEYWORDS):
+        # The keyword check also sees the cross-language expansion
+        # (Sweep fix D) so a Hindi facility question ("स्विमिंग पूल का
+        # समय क्या है?") routes here exactly like its English version.
+        routing_text = expand_query(user_text).lower()
+        if any(w in routing_text for w in _KNOWLEDGE_KEYWORDS):
             return LLMResponse(
                 tool_calls=[
                     ToolCallRequest(
@@ -1474,7 +1561,7 @@ class MockProvider:
         if not guest_id:
             guest_args = None
             for past in reversed(user_texts):
-                guest_args = _contact_args(past, context.hotel_id)
+                guest_args = _contact_args(past, context.hotel_id, allow_bare_name=True)
                 if guest_args is not None:
                     break
             if guest_args is not None:
@@ -1668,7 +1755,7 @@ class MockProvider:
         if not guest_id:
             guest_args = None
             for past in reversed(user_texts):
-                guest_args = _contact_args(past, context.hotel_id)
+                guest_args = _contact_args(past, context.hotel_id, allow_bare_name=True)
                 if guest_args is not None:
                     break
             if guest_args is not None:
@@ -1804,6 +1891,7 @@ class MockProvider:
                     or "खुशी से मदद" in content
                     or "could you share your name" in content
                     or "hold kar sakoon" in content
+                    or "रख सकूँ" in content
                 ):
                     signal = i
         return signal >= 0 and signal > last_done
@@ -1848,11 +1936,15 @@ class MockProvider:
             )
         # No known guest yet: look them up from contact details — the
         # current message first, then earlier guest messages.
-        guest_args = _contact_args(contact_text, context.hotel_id)
+        guest_args = _contact_args(contact_text, context.hotel_id, allow_bare_name=True)
         if guest_args is None:
             for msg in reversed(messages):
                 if msg.get("role") == "user":
-                    guest_args = _contact_args(str(msg.get("content", "")), context.hotel_id)
+                    guest_args = _contact_args(
+                        str(msg.get("content", "")),
+                        context.hotel_id,
+                        allow_bare_name=True,
+                    )
                     if guest_args is not None:
                         break
         if guest_args is not None:

@@ -15,6 +15,15 @@ from app.models.guest import Guest
 from app.models.hotel import Hotel
 from app.models.message import Message
 
+#: Channels whose clients hold no conversation id of their own: every
+#: inbound message arrives without one, so continuity can only come from
+#: resuming the guest's latest active conversation on that channel.
+#: Web/widget clients DO hold the id (session/local storage) and send it
+#: on every turn — for them a request *without* an id is an explicit new
+#: conversation and must start completely fresh: no inherited history and
+#: no inherited language preference from an earlier conversation.
+_RESUME_BY_GUEST_CHANNELS = frozenset({"telegram", "whatsapp"})
+
 
 def get_or_create_conversation(
     db: Session,
@@ -37,7 +46,7 @@ def get_or_create_conversation(
             return create_conversation(db, hotel_id=hotel_id, guest_id=guest_id, channel=channel)
         return conversation
 
-    if guest_id is not None:
+    if guest_id is not None and channel in _RESUME_BY_GUEST_CHANNELS:
         existing = db.scalar(
             select(Conversation)
             .where(

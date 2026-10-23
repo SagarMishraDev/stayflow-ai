@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.agent.query_terms import expand_query
 from app.agent.tools.registry import ToolContext, ToolSpec
 from app.models.faq import FAQ
 from app.models.hotel import Hotel
@@ -207,7 +208,13 @@ class SearchFaqArgs(BaseModel):
 
 def search_faq(db: Session, ctx: ToolContext, args: SearchFaqArgs) -> dict[str, Any]:
     _require_hotel(db, args.hotel_id)
-    words = [w for w in args.query.lower().split() if len(w) > 2][:8]
+    # FAQ text is English; expand Hindi/Hinglish facility terms to their
+    # canonical English keywords first (Sweep fix D) so a Hindi question
+    # retrieves the same entries its English translation would.
+    expanded = expand_query(args.query)
+    words = list(
+        dict.fromkeys(w for w in expanded.lower().split() if len(w) > 2)
+    )[:10]
     stmt = select(FAQ).where(FAQ.hotel_id == args.hotel_id, FAQ.is_active.is_(True))
     if words:
         conditions = [

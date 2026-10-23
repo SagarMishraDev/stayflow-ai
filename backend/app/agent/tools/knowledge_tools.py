@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.agent.query_terms import expand_query
 from app.agent.tools.registry import ToolContext, ToolSpec
 from app.knowledge import (
     KnowledgeRepository,
@@ -52,7 +53,13 @@ def search_hotel_knowledge(
     embedding = default_embedding_provider()
     retriever = Retriever(KnowledgeRepository(db, embedding), embedding)
     # hotel_id comes from the channel context, never from LLM arguments.
-    results = retriever.search(hotel_id=ctx.hotel_id, query=query, top_k=args.top_k)
+    # Expand Hindi/Hinglish facility terms to canonical English keywords
+    # before embedding (Sweep fix D): the hashed provider tokenises
+    # [a-z0-9]+ only, so an unexpanded Hindi query embeds to ~zero and
+    # retrieves nothing even when the knowledge base has the answer.
+    results = retriever.search(
+        hotel_id=ctx.hotel_id, query=expand_query(query), top_k=args.top_k
+    )
     return {
         "query": query,
         "results": [
