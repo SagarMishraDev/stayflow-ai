@@ -78,6 +78,27 @@ export interface Popularity {
   least_booked: PopularityRow[];
 }
 
+export type ActivityKind =
+  | "booking_created"
+  | "booking_confirmed"
+  | "booking_cancelled"
+  | "payment_received"
+  | "payment_pending"
+  | "refund_processed";
+
+export interface ActivityEvent {
+  kind: ActivityKind;
+  title: string;
+  /** Booking reference, e.g. "#42". */
+  reference: string;
+  /** Guest · room type, or payment method · booking. */
+  summary: string;
+  /** Decimal string, INR. */
+  amount: string;
+  /** ISO timestamp. */
+  timestamp: string;
+}
+
 export const RANGE_OPTIONS: { key: string; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "yesterday", label: "Yesterday" },
@@ -156,6 +177,16 @@ export async function fetchPopularity(hotelId: number, r: RangeParams): Promise<
     params: params(hotelId, r),
   });
   return data as Popularity;
+}
+
+export async function fetchActivity(
+  hotelId: number,
+  limit = 10,
+): Promise<ActivityEvent[]> {
+  const { data } = await api.get("/analytics/activity", {
+    params: { hotel_id: hotelId, limit },
+  });
+  return (data as { events: ActivityEvent[] }).events;
 }
 
 export async function downloadCsv(

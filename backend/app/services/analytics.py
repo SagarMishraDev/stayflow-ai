@@ -17,14 +17,16 @@ HMS_UPGRADE_REPORT.md (Phase 1) and restated in each function:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.audit_log import AuditLog
 from app.models.booking import Booking
+from app.models.guest import Guest
 from app.models.hotel import Hotel
 from app.models.order import Order
 from app.models.payment import Payment
@@ -467,3 +469,123 @@ def room_popularity(
     else:
         most, least = [], []
     return {"rooms": rows, "most_booked": most, "least_booked": least}
+
+
+# Payment lifecycle -> activity feed wording. Statuses not listed here
+# (e.g. "failed") are deliberately not surfaced as activity.
+_PAYMENT_ACTIVITY = {
+    "captured": ("payment_received", "Payment received"),
+    "pending": ("payment_pending", "Payment pending"),
+    "refunded": ("refund_processed", "Refund processed"),
+}
+
+
+def recent_activity(db: Session, hotel_id: int, *, limit: int = 10) -> list[dict]:
+    """Latest real booking/payment events for one hotel, newest first.
+
+    Booking events come from the audit log (``booking.created`` /
+    ``booking.cancelled``), which carries trustworthy timestamps for
+    both. Bookings with no ``booking.created`` audit row (e.g. seeded
+    directly) fall back to their ``created_at`` so the feed is never
+    silently missing them. Payment events come from payment rows by
+    status (captured / pending / refunded). Nothing is fabricated:
+    a hotel with no bookings or payments gets an empty feed.
+    """
+    events: list[dict] = []
+
+    bookings = {b.id: b for b in _bookings(db, hotel_id)}
+    guests = {
+        g.id: g
+        for g in db.scalars(select(Guest).where(Guest.hotel_id == hotel_id)).all()
+    }
+    rooms = {
+        r.id: r
+        for r in db.scalars(select(Room).where(Room.hotel_id == hotel_id)).all()
+    }
+
+    def booking_summary(booking: Booking) -> str:
+        parts = []
+        guest = guests.get(booking.guest_id)
+        if guest is not None:
+            parts.append(guest.name)
+        room = rooms.get(booking.room_id)
+        if room is not None:
+            parts.append(room.room_type)
+        return " · ".join(parts)
+
+    def created_event(booking: Booking, when: datetime) -> dict:
+        confirmed = booking.booking_status == "CONFIRMED"
+        return {
+            "kind": "booking_confirmed" if confirmed else "booking_created",
+            "title": "Booking confirmed" if confirmed else "New booking",
+            "reference": f"#{booking.id}",
+            "summary": booking_summary(booking),
+            "amount": _money(booking.final_price),
+            "timestamp": when,
+        }
+
+    audit_rows = db.scalars(
+        select(AuditLog)
+        .where(
+            AuditLog.hotel_id == hotel_id,
+            AuditLog.action.in_(("booking.created", "booking.cancelled")),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(200)
+    ).all()
+    audited_created: set[int] = set()
+    for row in audit_rows:
+        booking = bookings.get(row.entity_id) if row.entity_id else None
+        if booking is None:
+            continue
+        if row.action == "booking.created":
+            audited_created.add(booking.id)
+            events.append(created_event(booking, row.created_at))
+        else:  # booking.cancelled
+            events.append(
+                {
+                    "kind": "booking_cancelled",
+                    "title": "Booking cancelled",
+                    "reference": f"#{booking.id}",
+                    "summary": booking_summary(booking),
+                    "amount": _money(booking.final_price),
+                    "timestamp": row.created_at,
+                }
+            )
+    for booking in bookings.values():
+        if booking.id not in audited_created:
+            events.append(created_event(booking, booking.created_at))
+
+    payments = db.scalars(
+        select(Payment)
+        .where(Payment.hotel_id == hotel_id)
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .limit(200)
+    ).all()
+    for payment in payments:
+        wording = _PAYMENT_ACTIVITY.get(payment.status)
+        if wording is None:
+            continue
+        kind, title = wording
+        events.append(
+            {
+                "kind": kind,
+                "title": title,
+                "reference": f"#{payment.booking_id}",
+                "summary": f"{payment.method.replace('_', ' ').title()} · Booking #{payment.booking_id}",
+                "amount": _money(payment.amount),
+                "timestamp": payment.created_at,
+            }
+        )
+
+    def sort_key(event: dict) -> datetime:
+        ts = event["timestamp"]
+        # SQLite may hand back naive datetimes; treat them as UTC so
+        # aware/naive rows can be ordered together.
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+    events.sort(key=sort_key, reverse=True)
+    return [
+        {**event, "timestamp": sort_key(event).isoformat()}
+        for event in events[:limit]
+    ]

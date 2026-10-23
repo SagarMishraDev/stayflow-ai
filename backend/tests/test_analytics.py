@@ -249,3 +249,127 @@ def test_record_and_list_payments():
     ok(r, 200)
     amounts = {float(row["amount"]) for row in r.json()}
     assert 1500.0 in amounts
+
+
+def _audit(db, hotel_id, action, booking_id, when):
+    from app.models.audit_log import AuditLog
+
+    db.add(
+        AuditLog(
+            hotel_id=hotel_id,
+            actor_type="staff",
+            actor_id=None,
+            action=action,
+            entity_type="booking",
+            entity_id=booking_id,
+            created_at=when,
+        )
+    )
+    db.flush()
+
+
+def test_activity_feed_merges_booking_and_payment_events():
+    hotel = _fixtures()
+    db = next(get_db())
+    try:
+        bookings = (
+            db.query(Booking)
+            .filter(Booking.hotel_id == hotel["id"])
+            .order_by(Booking.id)
+            .all()
+        )
+        b1, b2, b3 = bookings[0], bookings[1], bookings[2]
+        _audit(
+            db,
+            hotel["id"],
+            "booking.created",
+            b2.id,
+            datetime(2026, 10, 19, 10, 30, tzinfo=UTC),
+        )
+        _audit(
+            db,
+            hotel["id"],
+            "booking.cancelled",
+            b3.id,
+            datetime(2026, 10, 3, 8, 0, tzinfo=UTC),
+        )
+        db.commit()
+        b2_id, b3_id = b2.id, b3.id
+    finally:
+        db.close()
+
+    r = client.get(
+        "/api/v1/analytics/activity", params={"hotel_id": hotel["id"], "limit": 50}
+    )
+    ok(r, 200)
+    events = r.json()["events"]
+    assert events, "expected a non-empty activity feed"
+    # Newest first: the 2026-10-20 captured payment leads.
+    assert events[0]["kind"] == "payment_received"
+    assert events[0]["amount"] == "2000"
+    timestamps = [e["timestamp"] for e in events]
+    assert timestamps == sorted(timestamps, reverse=True)
+    kinds = [e["kind"] for e in events]
+    assert "refund_processed" in kinds  # the 2026-10-11 refunded payment
+    assert "booking_cancelled" in kinds  # from the audit row
+    # The audited booking appears exactly once as a created/confirmed event
+    # (no duplicate fallback row for the same booking).
+    b2_created = [
+        e
+        for e in events
+        if e["reference"] == f"#{b2_id}" and e["kind"] == "booking_confirmed"
+    ]
+    assert len(b2_created) == 1
+    # Every event carries the display fields the dashboard renders.
+    for e in events:
+        assert e["title"] and e["reference"].startswith("#") and e["timestamp"]
+    assert b3_id  # silence unused; b3 covered via booking_cancelled above
+
+    r = client.get("/api/v1/analytics/activity", params={"hotel_id": hotel["id"], "limit": 3})
+    ok(r, 200)
+    assert len(r.json()["events"]) == 3
+
+
+def test_activity_feed_is_hotel_scoped_and_role_gated():
+    hotel = _fixtures()
+    other = make_hotel()
+
+    r = client.get(
+        "/api/v1/analytics/activity", params={"hotel_id": other["id"], "limit": 50}
+    )
+    ok(r, 200)
+    assert r.json()["events"] == []  # no leakage from the fixture hotel
+
+    # Unauthenticated -> 401.
+    plain = TestClient(app)
+    r = plain.get("/api/v1/analytics/activity", params={"hotel_id": hotel["id"]})
+    assert r.status_code == 401
+
+    # A kitchen user of the same hotel lacks analytics.view -> 403.
+    from app.core.security import create_access_token, hash_password
+    from app.db.session import SessionLocal
+    from app.models.hotel_user import HotelUser
+
+    db = SessionLocal()
+    try:
+        user = HotelUser(
+            hotel_id=hotel["id"],
+            name="Activity Kitchen",
+            email=f"activity-kitchen-{hotel['id']}@example.com",
+            role="kitchen",
+            password_hash=hash_password("activity-pass-123"),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        token = create_access_token(
+            hotel_user_id=user.id, hotel_id=user.hotel_id, role=user.role
+        )
+    finally:
+        db.close()
+    r = plain.get(
+        "/api/v1/analytics/activity",
+        params={"hotel_id": hotel["id"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403

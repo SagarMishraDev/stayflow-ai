@@ -137,6 +137,19 @@ def analytics_room_popularity(
     return analytics_service.room_popularity(db, hotel_id, start_d, end_d, today=date.today())
 
 
+@router.get("/analytics/activity")
+def analytics_activity(
+    hotel_id: int,
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db, scope="function"),
+    current_user: HotelUser = Depends(_ANALYTICS_VIEW),
+) -> dict:
+    """Recent booking/payment events for the activity feed (real rows
+    only — audit-log booking events + payment records, newest first)."""
+    _scope_hotel(db, hotel_id, current_user)
+    return {"events": analytics_service.recent_activity(db, hotel_id, limit=limit)}
+
+
 @router.get("/analytics/export")
 def analytics_export(
     hotel_id: int,
