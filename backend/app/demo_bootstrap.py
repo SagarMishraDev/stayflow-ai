@@ -104,12 +104,32 @@ def run_seed_script() -> None:
     logger.info("DEMO_SEED: seed complete")
 
 
+def apply_demo_fill() -> None:
+    """Env-gated analytics demo fill (``ANALYTICS_DEMO_FILL``).
+
+    Delegates to ``app.demo_fill.run_demo_fill_from_env``: ``1`` fills
+    the seeded demo hotel with a marked batch of synthetic bookings,
+    ``cleanup`` purges that batch, anything else is a no-op checked
+    before any database work. Fail-soft by design — a fill problem
+    must never prevent the demo service from booting.
+    """
+    try:
+        from app.db.session import SessionLocal
+        from app.demo_fill import run_demo_fill_from_env
+
+        run_demo_fill_from_env(SessionLocal)
+    except Exception:  # pragma: no cover - defensive boot guard
+        logger.exception("ANALYTICS_DEMO_FILL: unexpected failure; continuing boot")
+
+
 def prepare_demo_database(database_url: str) -> None:
     """Bring the demo database up to date, then seed it if empty.
 
     PostgreSQL → Alembic migrations to head (never ``create_all``).
     Anything else (SQLite) → ``create_all``. The seed step only runs
-    when the hotels table is empty.
+    when the hotels table is empty. Afterwards the env-gated demo fill
+    (``ANALYTICS_DEMO_FILL``) is applied to the seeded demo hotel,
+    whether it was just seeded or already existed.
     """
     url = normalize_database_url(database_url)
     if is_postgres_url(url):
@@ -120,5 +140,7 @@ def prepare_demo_database(database_url: str) -> None:
     hotel_count = count_hotels()
     if hotel_count > 0:
         logger.info("DEMO_SEED: %s hotel(s) already present, skipping seed", hotel_count)
-        return
-    run_seed_script()
+    else:
+        run_seed_script()
+
+    apply_demo_fill()

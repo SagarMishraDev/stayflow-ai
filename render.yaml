@@ -61,6 +61,17 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         value: Preview@123
+      # --- Optional: analytics demo data fill -------------------------
+      # Adds ~180 clearly-marked synthetic bookings (batch DEMO-FILL-2026)
+      # to the seeded demo hotel so the Analytics graphs show real shapes.
+      # Add this variable in the Render dashboard with value "1" — the
+      # service restarts and fills on boot (idempotent). Later, set it to
+      # "cleanup" and restart to remove exactly that batch, then DELETE
+      # the variable when done. Declared sync:false so blueprint syncs
+      # never overwrite the value chosen in the dashboard.
+      # See docs/DEMO_FILL.md.
+      - key: ANALYTICS_DEMO_FILL
+        sync: false
       # --- Optional: Telegram guest bot (paste-only activation) -------
       # Public URL of this service; the app uses it at startup to
       # register the Telegram webhook. Not a secret.
