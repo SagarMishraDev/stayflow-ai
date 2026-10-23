@@ -479,7 +479,10 @@ _LANGUAGE_INSTRUCTIONS: dict[ResponseLanguage, str] = {
         "invent transliterated non-words. Common English hotel terms "
         "(check-in, check-out, room service, booking) may stay in English "
         "where a Hindi speaker would naturally use them. Keep names, "
-        "prices, dates, times and IDs exactly as the tools returned them."
+        "prices, dates, times and IDs exactly as the tools returned them, "
+        "and keep facility and room names (e.g. Serenity Spa plunge pool) "
+        "in their original English spelling — never transliterate or "
+        "translate a proper noun."
     ),
     ResponseLanguage.HINGLISH: (
         "RESPONSE LANGUAGE FOR THIS TURN: Hinglish. Write the ENTIRE reply "
@@ -488,7 +491,9 @@ _LANGUAGE_INSTRUCTIONS: dict[ResponseLanguage, str] = {
         "way the guest is writing (e.g. 'Bilkul, room available hai — aap "
         "check-in date bata dijiye'). Write only real words; NEVER invent "
         "garbled transliterations. Keep names, prices, dates, times and "
-        "IDs exactly as the tools returned them."
+        "IDs exactly as the tools returned them, and keep facility and "
+        "room names (e.g. Serenity Spa plunge pool) in their original "
+        "English spelling — never transliterate or translate a proper noun."
     ),
     ResponseLanguage.ENGLISH: (
         "RESPONSE LANGUAGE FOR THIS TURN: English. Write the entire reply "

@@ -251,3 +251,66 @@ query).
   file.
 - Not done here (per instructions): no commit/push/deploy, no live-DB
   changes. The parent agent releases and re-runs the live sweep.
+
+## Round 2 — Mercury generation-layer fixes (post-deploy live re-test)
+
+After commit 9d24e99 deployed, the live re-test (2026-10-23) confirmed
+Bugs A, B and C fixed (no language leak into a fresh conversation, the
+Latin-script name accepted in the Hindi flow, the Hinglish summary
+rendered in Hinglish). One failure remained, plus one related
+observation — both in the Mercury generation layer, not in retrieval
+or the deterministic flows:
+
+- Bug D, live evidence: the Hindi query "स्विमिंग पूल का समय क्या है?"
+  now retrieves the Serenity Spa plunge-pool chunk (the round-1 unit
+  tests prove the chunk reaches the model), but the model's Hindi
+  reply garbled it: "मुझे तत्परह पुरिनिमगिंग पूल का सटीक समय उपलब्ध
+  नहीं है। कृपया फ्रंट डेस्क से संपर्क करें…" — "plunge pool" was
+  transliterated into nonsense Devanagari and the name "Serenity Spa"
+  was dropped entirely.
+- Date prose slip: in a Hindi booking opener the model's prose first
+  stated the WRONG weekend dates (24–25 Oct) before the deterministic
+  quote corrected them to 31 Oct–1 Nov — despite the existing DATE
+  RESOLUTION note in the prompt.
+
+### Prompt changes (no restructure; same sections, same style)
+
+The grounding/date instructions are assembled in
+`backend/app/agent/prompts.py` (`build_system_prompt`, used for the
+Mercury path via the runner); the per-turn language instructions live
+in `backend/app/agent/language.py`.
+
+1. Proper-noun preservation — new bullet in the Language policy
+   section of `prompts.py`: facility names, room names and place
+   names from the retrieved knowledge and tool results are quoted in
+   their ORIGINAL English spelling in every language ("Serenity Spa
+   plunge pool", never a transliteration or translation); facts the
+   knowledge contains are stated, and a missing detail (e.g. timings)
+   is admitted honestly without dropping the name. The same one-line
+   rule was added to the per-turn Hindi and Hinglish instructions in
+   `language.py`, which sit at the end of the prompt closest to
+   generation.
+2. Date discipline — the "Dates and relative phrases" section of
+   `prompts.py` now states that when a DETERMINISTIC DATE RESOLUTION
+   note is present, its resolved check-in/check-out dates are the
+   ONLY dates the reply may state anywhere; no other date may be
+   mentioned in the prose, not even as an aside.
+
+### Tests
+
+- 3 new tests in `backend/tests/test_sweep_fixes.py` (16 total):
+  the built system prompt contains the proper-noun rule (with the
+  Serenity Spa example and the honest-missing-detail clause), the
+  system prompt contains the exclusive-dates clause, and the Hindi /
+  Hinglish per-turn instructions carry the untransliterated
+  proper-noun rule.
+- Targeted run (test_sweep_fixes + test_prompt_injection +
+  test_language + test_inception_provider): 66 passed.
+- Full suite: **336 passed / 2 failed (only the two pre-existing
+  SQLite-env failures: `test_hotel_crud_and_validation`,
+  `test_ingest_document_creates_chunks_and_embeddings`) / 2
+  deselected** — 333 baseline + 3 new, zero regressions. Ruff clean
+  on `app/` and `tests/`.
+- Not done here (per instructions): no commit/push/deploy. The
+  parent agent releases and re-runs the live Hindi pool + booking
+  checks.

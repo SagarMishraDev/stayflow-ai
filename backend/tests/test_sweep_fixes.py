@@ -395,3 +395,62 @@ def test_hindi_pool_question_via_faq_tool():
         db.close()
     answers = " ".join(f["answer"] for f in result["results"])
     assert "plunge pool" in answers
+
+
+# ---------------------------------------------------------------------------
+# Round 2 (post-deploy live re-test): retrieval for Bug D was fixed, but
+# the Mercury generation layer still garbled the grounded content — it
+# transliterated "plunge pool" into nonsense Devanagari, dropped the
+# name "Serenity Spa", and in a Hindi booking opener stated the wrong
+# weekend dates in prose before the deterministic quote corrected them.
+# These tests pin the prompt-level rules added for both failure modes.
+# ---------------------------------------------------------------------------
+
+
+def _system_prompt() -> str:
+    from app.agent.prompts import build_system_prompt
+    from app.agent.providers.base import ProviderContext
+
+    ctx = ProviderContext(
+        hotel_id=1,
+        hotel_name="StayFlow Grand Hotel",
+        currency="INR",
+        today="2026-10-23",
+        room_types=[],
+        guest_id=None,
+        guest_name=None,
+    )
+    return build_system_prompt(ctx)
+
+
+def test_system_prompt_keeps_proper_nouns_in_original_english_spelling():
+    """Facility/room names from retrieved knowledge must be quoted
+    verbatim — never transliterated or translated — in every language."""
+    prompt = _system_prompt()
+    assert "ORIGINAL English spelling" in prompt
+    assert "Serenity Spa plunge pool" in prompt
+    assert "never a transliteration or" in prompt
+    # Facts the knowledge contains are stated; a missing detail (timings)
+    # is admitted honestly without dropping the facility's name.
+    assert "say so honestly" in prompt
+    assert "never drop the name" in prompt
+
+
+def test_system_prompt_date_resolution_note_is_exclusive():
+    """When a DETERMINISTIC DATE RESOLUTION note is present, its dates
+    are the ONLY dates the reply may state — no other date in prose."""
+    prompt = _system_prompt()
+    assert "DETERMINISTIC DATE RESOLUTION note" in prompt
+    assert "are the ONLY dates you" in prompt
+    assert "never mention any other date" in prompt
+
+
+def test_language_instructions_keep_proper_nouns_untransliterated():
+    """The per-turn Hindi/Hinglish instructions carry the same rule,
+    since they sit closest to generation."""
+    from app.agent.language import build_language_instruction
+
+    for language in (ResponseLanguage.HINDI, ResponseLanguage.HINGLISH):
+        instruction = build_language_instruction(language)
+        assert "original English spelling" in instruction
+        assert "never transliterate or translate a proper noun" in instruction
