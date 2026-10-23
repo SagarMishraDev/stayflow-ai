@@ -184,6 +184,62 @@ def _date_resolution_note(message: str, today: date) -> str:
     )
 
 
+def _retrieved_knowledge_note(db: Session, ctx: ToolContext, message: str) -> str:
+    """Deterministic knowledge pre-retrieval for LLM-backed providers.
+
+    Whether the knowledge tools get called is otherwise the model's
+    choice — and live, Mercury repeatedly answered the Hindi pool
+    question ("स्विमिंग पूल का समय क्या है?") without calling them, so
+    the grounded Serenity Spa plunge-pool chunk never reached
+    generation and the reply guessed, transliterated the name into
+    nonsense, or dropped it entirely. Retrieval itself is deterministic
+    and hotel-isolated, so the runner runs it for every guest turn and
+    injects whatever matches into the system prompt — the same results,
+    under the same semantics, the tools themselves return (FAQ
+    word-overlap; knowledge cosine > 0 after query expansion). Nothing
+    is injected when nothing matches, so greetings and booking slot
+    replies carry no extra noise. A retrieval failure must never break
+    the chat: log it and continue without the note.
+    """
+    # Deferred import, mirroring build_registry: the tool modules import
+    # the registry, which the runner already depends on.
+    from app.agent.tools.hotel_tools import SearchFaqArgs, search_faq
+    from app.agent.tools.knowledge_tools import (
+        SearchHotelKnowledgeArgs,
+        search_hotel_knowledge,
+    )
+
+    try:
+        faq = search_faq(
+            db, ctx, SearchFaqArgs(hotel_id=ctx.hotel_id, query=message, limit=3)
+        )
+        knowledge = search_hotel_knowledge(
+            db, ctx, SearchHotelKnowledgeArgs(query=message, top_k=3)
+        )
+    except Exception:  # noqa: BLE001 - retrieval must never break the chat
+        logger.exception("Knowledge pre-retrieval failed; continuing without it")
+        return ""
+
+    lines: list[str] = []
+    for item in faq.get("results", []):
+        lines.append(f"- FAQ — Q: {item['question']} A: {item['answer']}")
+    for item in knowledge.get("results", []):
+        lines.append(f'- From "{item["title"]}": {item["content"]}')
+    if not lines:
+        return ""
+    return (
+        "\n\nRETRIEVED HOTEL KNOWLEDGE for the guest's latest message — "
+        "passages from THIS hotel's own FAQ and knowledge base, retrieved "
+        "for you because they match the guest's question:\n"
+        + "\n".join(lines)
+        + "\nAnswer the guest's question from this material when it covers "
+        "the topic. Keep facility and place names in their original English "
+        "spelling in every language — never transliterate or translate a "
+        "proper noun. If the material does not cover what the guest asked, "
+        "say so honestly instead of inventing details."
+    )
+
+
 def _history_messages(db: Session, conversation_id: int, limit: int) -> list[dict[str, Any]]:
     """Rebuild OpenAI-style history, including past tool calls/results."""
     messages: list[dict[str, Any]] = []
@@ -294,11 +350,21 @@ def run_chat(
         channel=channel,
     )
 
+    # Real-LLM providers get two deterministic assists the mock does not
+    # need: knowledge pre-retrieval (below) and the empty-completion
+    # retry in the loop. The mock is deterministic and routes knowledge
+    # itself, so its behaviour is deliberately untouched.
+    llm_backed = getattr(provider, "name", "") != "mock"
+    knowledge_note = (
+        _retrieved_knowledge_note(db, tool_ctx, text) if llm_backed else ""
+    )
+
     messages: list[dict[str, Any]] = [
         {
             "role": "system",
             "content": build_system_prompt(provider_context)
             + _date_resolution_note(text, date.fromisoformat(provider_context.today))
+            + knowledge_note
             + "\n\n"
             + build_language_instruction(response_language),
         }
@@ -330,6 +396,32 @@ def run_chat(
                 degraded = True
                 reply = _fallback("generic_error", response_language)
                 break
+
+            if llm_backed and not llm.wants_tools and not llm.content.strip():
+                # A final answer with no text and no tool calls is an
+                # empty completion, not evidence the guest was unclear:
+                # Mercury intermittently returns one for perfectly
+                # ordinary messages (observed live on Hindi booking and
+                # FAQ turns), and the guest would otherwise be told "I
+                # didn't understand" for a message the model simply
+                # failed to answer. Re-ask once; only a second empty
+                # completion earns the "unsure" fallback below.
+                logger.warning(
+                    "LLM returned an empty final answer (iteration %d); retrying once",
+                    iteration,
+                )
+                try:
+                    llm = provider.chat(messages, tool_defs, provider_context)
+                except ProviderError:
+                    logger.exception("LLM provider failed on empty-answer retry")
+                    degraded = True
+                    reply = _fallback("provider_down", response_language)
+                    break
+                except Exception:  # noqa: BLE001 - never crash the chat on provider bugs
+                    logger.exception("LLM provider raised unexpectedly on empty-answer retry")
+                    degraded = True
+                    reply = _fallback("generic_error", response_language)
+                    break
 
             if not llm.wants_tools:
                 reply = llm.content.strip() or _fallback("unsure", response_language)

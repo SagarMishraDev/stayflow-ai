@@ -314,3 +314,175 @@ in `backend/app/agent/language.py`.
 - Not done here (per instructions): no commit/push/deploy. The
   parent agent releases and re-runs the live Hindi pool + booking
   checks.
+
+## Round 3 — deterministic grounding, empty-completion retry, Devanagari weekend phrases
+
+Post-deploy live re-test #2 (commit 4fdeea5) failed both remaining
+checks, and follow-up variance runs (fresh tabs, same build) separated
+the causes:
+
+- Hindi pool question: one run transliterated the facility name, one
+  dropped it entirely, one got the "मैं समझ नहीं पाया" fallback —
+  three different failure shapes for one question.
+- Hindi booking opener "मुझे अगले सप्ताहांत के लिए कमरा बुक करना है":
+  understood 2/2 in the variance round (so the earlier "didn't
+  understand" was intermittent, NOT a regression from the Round 2
+  prompt change) — but in BOTH replies the prose dates were Saturday
+  24 → Sunday 25 October 2026 (THIS weekend) where "next weekend" must
+  be 31 Oct → 1 Nov. English stated 31 Oct correctly.
+
+### Diagnosis 1 — knowledge on the LLM path was tool-call-only
+
+`backend/app/agent/runner.py` assembled the turn as system prompt +
+history and left `search_faq` / `search_hotel_knowledge` entirely to
+the model's discretion. Retrieval itself was proven good (Round 1
+tests: `search_faq` and `search_hotel_knowledge` with
+`expand_query()` surface the Serenity Spa plunge-pool chunk for the
+exact Hindi query) — but Mercury repeatedly answered without calling
+the tools, so no grounded chunk ever reached generation. A prompt
+rule cannot preserve a name the model never saw.
+
+### Fix 1 — deterministic pre-retrieval injected into the system prompt
+
+`runner.py:187` `_retrieved_knowledge_note(db, ctx, message)` runs the
+two existing tool handlers — `search_faq` (hotel_tools) and
+`search_hotel_knowledge` (knowledge_tools) — against the guest's raw
+message, with the trusted `ToolContext` (hotel_id from context, never
+from the message). Both handlers apply `expand_query()` internally,
+and their existing match semantics are the gate: FAQ word-overlap,
+knowledge cosine > 0 (the `Retriever` default the tool itself uses).
+Matches are injected into the system prompt (`runner.py:357-367`)
+between the date-resolution note and the language instruction, under a
+"RETRIEVED HOTEL KNOWLEDGE" header with the instruction to answer from
+the material and keep proper nouns in their original English spelling.
+Nothing matches → nothing is injected (greetings, booking slot
+replies). Retrieval failure is caught, logged, and the chat continues
+without the note. Hotel isolation is inherited unchanged from the two
+services (FAQ `hotel_id` predicate; `KnowledgeRepository.list_chunks`
+hotel-scoped SQL). The change is gated to LLM-backed providers
+(`provider.name != "mock"`): the deterministic mock routes knowledge
+itself and its behaviour is untouched.
+
+### Diagnosis 2 — the Hindi "unsure" fallback fires on empty completions
+
+The exact string lives at `runner.py:73` (`_FALLBACKS["unsure"]`,
+Hindi entry) and is emitted at `runner.py:427`:
+
+```python
+reply = llm.content.strip() or _fallback("unsure", response_language)
+```
+
+i.e. exactly when the provider returns a FINAL answer (no tool calls)
+with empty/whitespace content. On the Mercury path,
+`InceptionProvider._parse_response` maps a completion with
+`content: null`/absent to `""`, and Mercury intermittently returns
+such empty completions for perfectly ordinary Hindi messages (booking
+opener once, pool question once, in live runs). The guest is then told
+"I didn't understand" for a message the model simply failed to answer
+— the turn WAS understood; no parse failure or runner bug is involved.
+Before Round 3 this was the ONLY condition that emits the string on
+the LLM path (the other fallbacks need a ProviderError or iteration
+exhaustion).
+
+### Fix 2 — one bounded retry before the "unsure" fallback may fire
+
+`runner.py:400-424`: on an LLM-backed provider, a final answer with no
+content and no tool calls is re-asked once (with a warning log). A
+retry that returns content or tool calls proceeds normally; a retry
+that raises degrades via the existing `provider_down` / `generic_error`
+fallbacks; only a SECOND empty completion reaches the "unsure"
+fallback at line 427. The mock path is not retried (its empty replies
+are scripted, deterministic outcomes). This does not paper over the
+fallback — it reserves it for the case where the provider was asked
+twice and still produced nothing.
+
+### Diagnosis 3 — the resolver mis-resolved "अगले सप्ताहांत"; the note carried wrong dates
+
+Direct check against a frozen Friday 2026-10-23, before the fix:
+
+| message | resolved | verdict |
+| --- | --- | --- |
+| मुझे अगले सप्ताहांत के लिए कमरा बुक करना है | this_weekend, 2026-10-24 → 25 | WRONG — must be next (31 Oct → 1 Nov) |
+| अगला सप्ताहांत | next_weekend, 2026-10-31 → 11-01 | correct |
+| इस सप्ताहांत / bare सप्ताहांत | this_weekend | correct |
+| अगले वीकेंड / इस वीकेंड / bare वीकेंड | None | no note injected at all |
+
+Root cause in `backend/app/agent/relative_dates.py` (patterns at
+lines 102-110): `_NEXT_WEEKEND_RE` contained only the nominative
+`अगला सप्ताहांत`. Hindi grammar requires the oblique `अगले` before
+`के लिए`, and `अगले सप्ताहांत` fell through to `_THIS_WEEKEND_RE`'s
+bare `सप्ताहांत` alternative → this weekend. So the DETERMINISTIC
+DATE RESOLUTION note WAS present in the prompt for the live opener —
+pinning the WRONG dates — and the model's prose faithfully restated
+the note. (The deterministic quote/summary in the full flow showed
+31 Oct–1 Nov because Mercury passed its own, correct understanding of
+अगले to the booking tools.) This was a resolver bug, not model
+non-compliance; no prompt-side date injection change was needed beyond
+making the existing note correct.
+
+### Fix 3 — Devanagari weekend patterns completed
+
+`relative_dates.py` `_NEXT_WEEKEND_RE` gains `अगले सप्ताहांत`,
+`अगला वीकेंड`, `अगले वीकेंड`; `_THIS_WEEKEND_RE` gains `इस वीकेंड` and
+bare `वीकेंड` (mirroring bare `weekend` → this weekend). Devanagari
+weekday names already existed in `_WEEKDAYS` (सोमवार…रविवार) and are
+unchanged. Post-fix, frozen at Friday 2026-10-23: `अगले सप्ताहांत` →
+next_weekend 2026-10-31 → 2026-11-01; `इस सप्ताहांत`/bare `सप्ताहांत`
+→ this_weekend 2026-10-24 → 25; all three वीकेंड forms resolve
+(next/this/this); English results identical to before.
+
+### Tests
+
+7 new tests in `backend/tests/test_sweep_fixes.py` (file total 23):
+
+- `test_llm_turn_injects_matching_knowledge_for_hindi_pool_query` —
+  capturing LLM provider: the Hindi pool turn's system prompt contains
+  the RETRIEVED HOTEL KNOWLEDGE block with "Serenity Spa" / "plunge
+  pool", though the provider never requested a tool call.
+- `test_llm_turn_injects_nothing_for_unrelated_message` — "hello"
+  injects nothing against the same seeded hotel.
+- `test_llm_turn_never_injects_another_hotels_knowledge` — a second
+  hotel seeded with "Borealis" pool FAQ + knowledge: chatting in
+  hotel A injects A's Serenity Spa content and never "Borealis".
+- `test_empty_completion_is_retried_once_before_unsure_fallback` —
+  empty-then-answer provider: reply is the real answer, exactly 2
+  provider calls, not degraded.
+- `test_second_empty_completion_still_earns_unsure_fallback` —
+  always-empty provider: exactly 2 calls, reply is the exact Hindi
+  fallback string.
+- `test_resolver_devanagari_weekend_phrases_frozen_clock` — frozen
+  Friday 2026-10-23: अगले सप्ताहांत → 2026-10-31 → 11-01 (key
+  next_weekend); इस सप्ताहांत and bare सप्ताहांत → this weekend;
+  अगले वीकेंड → next; इस वीकेंड and bare वीकेंड → this.
+- `test_hindi_next_weekend_note_reaches_prompt_with_correct_dates` —
+  capturing provider: the assembled system prompt for the exact live
+  opener contains the DETERMINISTIC DATE RESOLUTION note pinning
+  check-in to next weekend's Saturday (computed from hotel-local
+  today), and NOT this weekend's Saturday.
+
+### Verification
+
+- Baseline (as specified for this round): 336 passed / 2 failed /
+  2 deselected (failures: the pre-existing SQLite-env pair
+  `test_hotel_crud_and_validation`,
+  `test_ingest_document_creates_chunks_and_embeddings`). A baseline
+  run launched at the start of this round finished 335/3/2, but it is
+  not a clean reference: it executed for ~11 minutes while the edits
+  below were landing, and its third failure was
+  `test_rate_limit.py::test_whatsapp_webhook_rate_limited_per_sender`
+  — a timing-sensitive webhook test unrelated to these changes, which
+  PASSED in the clean post-change full run below (whose totals
+  reconcile exactly: 340 baseline items + 7 new tests = 347).
+- Targeted run (test_sweep_fixes + test_agent_dates_modify +
+  test_language + test_agent + test_prompt_injection + test_rag):
+  114 passed / 1 failed (`test_ingest_document_creates_chunks_and_embeddings`,
+  one of the pre-existing pair; the other lives in
+  test_pms_comprehensive.py, outside this file list) / 2 deselected.
+- `tests/test_sweep_fixes.py` alone: 23 passed.
+- Full suite after changes: **343 passed / 2 failed (only the same
+  pre-existing pair) / 2 deselected** — 336 baseline + 7 new, zero
+  regressions. Ruff clean on `app/` and `tests/`.
+- Not done here (per instructions): no commit/push/deploy. The parent
+  agent releases and re-runs the live Hindi pool question, the Hindi
+  next-weekend opener (prose dates must now read 31 Oct → 1 Nov), and
+  the Hindi FAQ turn.

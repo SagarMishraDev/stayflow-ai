@@ -454,3 +454,221 @@ def test_language_instructions_keep_proper_nouns_untransliterated():
         instruction = build_language_instruction(language)
         assert "original English spelling" in instruction
         assert "never transliterate or translate a proper noun" in instruction
+
+
+# ---------------------------------------------------------------------------
+# Round 3 (post-deploy live re-test #2 + variance runs):
+# 1. Knowledge pre-retrieval — retrieval worked when CALLED, but on the
+#    live Mercury path the model repeatedly answered the Hindi pool
+#    question without calling the knowledge tools, so the plunge-pool
+#    chunk never reached generation (the reply guessed, transliterated
+#    the facility's name, or dropped it). The runner now pre-retrieves
+#    for LLM-backed providers and injects matches into the system
+#    prompt; the mock path is untouched.
+# 2. Empty-completion retry — the Hindi "unsure" fallback ("माफ़ कीजिए,
+#    मैं समझ नहीं पाया…") fired intermittently on the Mercury path for
+#    ordinary Hindi messages (booking AND FAQ turns). It is emitted by
+#    the runner (runner.py, the "unsure" entry of _FALLBACKS) exactly
+#    when the provider returns a final answer with no content and no
+#    tool calls — an empty completion. The runner now re-asks once;
+#    only a second empty completion earns the fallback.
+# 3. Devanagari weekend phrases — "अगले सप्ताहांत" (the oblique form
+#    Hindi grammar requires before के लिए) matched only the bare
+#    सप्ताहांत pattern and resolved as THIS weekend, so the
+#    DETERMINISTIC DATE RESOLUTION note itself pinned 24–25 Oct and
+#    the model's prose faithfully restated the wrong dates; वीकेंड
+#    matched nothing at all.
+# ---------------------------------------------------------------------------
+
+from app.agent.providers.base import LLMResponse  # noqa: E402
+from app.agent.runner import run_chat  # noqa: E402
+
+
+class _CapturingLlmProvider:
+    """Records what the runner hands an LLM-backed provider."""
+
+    name = "capturing-llm"
+
+    def __init__(self, content="Noted."):
+        self.messages = None
+        self.context = None
+        self.calls = 0
+        self._content = content
+
+    def chat(self, messages, tools, context):
+        self.calls += 1
+        self.messages = messages
+        self.context = context
+        return LLMResponse(content=self._content)
+
+
+def _run_with_provider(hotel_id, message, provider):
+    db = SessionLocal()
+    try:
+        return run_chat(db, hotel_id=hotel_id, message=message, provider=provider)
+    finally:
+        db.close()
+
+
+def test_llm_turn_injects_matching_knowledge_for_hindi_pool_query():
+    hotel = make_hotel()
+    _seed_spa_knowledge_and_faq(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "स्विमिंग पूल का समय क्या है?", provider)
+    system = provider.messages[0]["content"]
+    assert "RETRIEVED HOTEL KNOWLEDGE" in system
+    # The grounded chunk reaches generation even though the provider
+    # never asked for a tool call.
+    assert "Serenity Spa" in system
+    assert "plunge pool" in system
+
+
+def test_llm_turn_injects_nothing_for_unrelated_message():
+    hotel = make_hotel()
+    _seed_spa_knowledge_and_faq(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "hello", provider)
+    system = provider.messages[0]["content"]
+    assert "RETRIEVED HOTEL KNOWLEDGE" not in system
+
+
+def _seed_borealis_knowledge_and_faq(hotel_id):
+    db = SessionLocal()
+    try:
+        repo = KnowledgeRepository(db, default_embedding_provider())
+        repo.create_document(
+            hotel_id=hotel_id,
+            title="Borealis Spa guide",
+            content=(
+                "The Borealis Spa swimming pool and plunge pool are open "
+                "24 hours. The Borealis wellness area also has a sauna."
+            ),
+            source="test",
+        )
+        db.add(
+            FAQ(
+                hotel_id=hotel_id,
+                question="Is there a swimming pool?",
+                answer="Yes, the Borealis Spa swimming pool is open 24 hours.",
+                is_active=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_llm_turn_never_injects_another_hotels_knowledge():
+    hotel_a = make_hotel()
+    _seed_spa_knowledge_and_faq(hotel_a["id"])
+    hotel_b = make_hotel()
+    _seed_borealis_knowledge_and_faq(hotel_b["id"])
+
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel_a["id"], "स्विमिंग पूल का समय क्या है?", provider)
+    system = provider.messages[0]["content"]
+    assert "Serenity Spa" in system  # hotel A's own knowledge is injected
+    assert "Borealis" not in system  # hotel B's never leaks across hotels
+
+
+class _EmptyThenAnswerProvider:
+    """First turn: an empty completion. Second: a real answer."""
+
+    name = "empty-then-answer"
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, messages, tools, context):
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(content="")
+        return LLMResponse(content="Here is your answer.")
+
+
+class _AlwaysEmptyProvider:
+    name = "always-empty"
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, messages, tools, context):
+        self.calls += 1
+        return LLMResponse(content="")
+
+
+def test_empty_completion_is_retried_once_before_unsure_fallback():
+    hotel = make_hotel()
+    provider = _EmptyThenAnswerProvider()
+    result = _run_with_provider(hotel["id"], "मुझे कमरा बुक करना है", provider)
+    assert provider.calls == 2  # the empty completion was re-asked once
+    assert result.reply == "Here is your answer."
+    assert result.degraded is False
+
+
+def test_second_empty_completion_still_earns_unsure_fallback():
+    hotel = make_hotel()
+    provider = _AlwaysEmptyProvider()
+    result = _run_with_provider(hotel["id"], "मुझे कमरा बुक करना है", provider)
+    assert provider.calls == 2  # initial call + exactly one retry
+    # The exact live-observed Hindi fallback text.
+    assert result.reply == (
+        "माफ़ कीजिए, मैं समझ नहीं पाया। क्या आप इसे दूसरे शब्दों में बता सकते हैं?"
+    )
+
+
+def test_resolver_devanagari_weekend_phrases_frozen_clock():
+    from datetime import date
+
+    from app.agent.relative_dates import resolve_relative_stay
+
+    friday = date(2026, 10, 23)  # a Friday
+
+    # The exact live opener: oblique अगले + सप्ताहांत = NEXT weekend.
+    stay = resolve_relative_stay(
+        "मुझे अगले सप्ताहांत के लिए कमरा बुक करना है", friday
+    )
+    assert stay is not None and stay.key == "next_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 31), date(2026, 11, 1))
+
+    stay = resolve_relative_stay("इस सप्ताहांत कमरा चाहिए", friday)
+    assert stay is not None and stay.key == "this_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 24), date(2026, 10, 25))
+
+    stay = resolve_relative_stay("सप्ताहांत पर आना है", friday)
+    assert stay is not None and stay.key == "this_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 24), date(2026, 10, 25))
+
+    # वीकेंड forms previously matched nothing at all.
+    stay = resolve_relative_stay("अगले वीकेंड कमरा चाहिए", friday)
+    assert stay is not None and stay.key == "next_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 31), date(2026, 11, 1))
+
+    stay = resolve_relative_stay("इस वीकेंड कमरा चाहिए", friday)
+    assert stay is not None and stay.key == "this_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 24), date(2026, 10, 25))
+
+    stay = resolve_relative_stay("वीकेंड पर आना है", friday)
+    assert stay is not None and stay.key == "this_weekend"
+    assert (stay.check_in, stay.check_out) == (date(2026, 10, 24), date(2026, 10, 25))
+
+
+def test_hindi_next_weekend_note_reaches_prompt_with_correct_dates():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    hotel = make_hotel()
+    provider = _CapturingLlmProvider()
+    _run_with_provider(
+        hotel["id"], "मुझे अगले सप्ताहांत के लिए कमरा बुक करना है", provider
+    )
+    system = provider.messages[0]["content"]
+    assert "DETERMINISTIC DATE RESOLUTION" in system
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    imminent_saturday = today + timedelta(days=(5 - today.weekday()) % 7)
+    next_saturday = imminent_saturday + timedelta(days=7)
+    # The note pins NEXT weekend's Saturday as check-in — not this
+    # weekend's (the pre-fix resolver resolved अगले सप्ताहांत to the
+    # imminent Saturday and the note carried those wrong dates).
+    assert f"check-in {next_saturday.isoformat()}" in system
+    assert f"check-in {imminent_saturday.isoformat()}" not in system

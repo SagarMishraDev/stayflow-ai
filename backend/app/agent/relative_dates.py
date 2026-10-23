@@ -10,6 +10,11 @@ current date **in the hotel's timezone** (the runner computes it).
 Semantics (documented so support and tests can rely on them):
 
 - A "weekend" stay is Saturday check-in -> Sunday check-out (1 night).
+  Devanagari forms count too — सप्ताहांत and वीकेंड, in both the
+  nominative (अगला / इस) and the oblique (अगले) forms Hindi grammar
+  uses before a postposition ("अगले सप्ताहांत के लिए"). The oblique
+  next-weekend form matters: without it, "अगले सप्ताहांत" fell
+  through to the bare सप्ताहांत pattern and resolved as THIS weekend.
 - "this weekend" is the imminent Saturday: today itself when today is
   a Saturday. On a Sunday the current weekend's Saturday is already
   past, so "this weekend" means the coming Saturday.
@@ -95,11 +100,13 @@ _DAY_AFTER_TOMORROW_RE = re.compile(
     r"day after tomorrow|\bparson?\b|परसों|परसो", re.IGNORECASE
 )
 _NEXT_WEEKEND_RE = re.compile(
-    r"next weekend|agle weekend|agla weekend|next week'?s weekend|अगला सप्ताहांत",
+    r"next weekend|agle weekend|agla weekend|next week'?s weekend"
+    r"|अगला सप्ताहांत|अगले सप्ताहांत|अगला वीकेंड|अगले वीकेंड",
     re.IGNORECASE,
 )
 _THIS_WEEKEND_RE = re.compile(
-    r"this weekend|is weekend|weekend|इस सप्ताहांत|सप्ताहांत", re.IGNORECASE
+    r"this weekend|is weekend|weekend|इस सप्ताहांत|सप्ताहांत|इस वीकेंड|वीकेंड",
+    re.IGNORECASE,
 )
 _NEXT_WEEK_RE = re.compile(r"next week|agle hafte|agla hafta", re.IGNORECASE)
 _TOMORROW_RE = re.compile(r"tomorrow|\bkal\b|कल", re.IGNORECASE)
