@@ -535,3 +535,137 @@ def test_popularity_series_is_hotel_scoped_and_role_gated():
         params={"hotel_id": hotel["id"], "group_by": "hour", **OCT},
     )
     assert r.status_code == 422
+
+
+# --------------------------------------------------------------------- #
+# Regression: wide-range totals and open-ended ("all") denominators     #
+# (Analytics chart fixes, 2026-10-23)                                    #
+# --------------------------------------------------------------------- #
+def _wide_range_fixtures():
+    """Three stays spread over ~17 months — beyond the 366-bucket cap."""
+    hotel = make_hotel()
+    guest = make_guest(hotel["id"])
+    room = make_room(hotel["id"], room_type="Deluxe", capacity=2, total_rooms=5)
+    db = next(get_db())
+    try:
+        for check_in, price in (
+            (date(2025, 1, 5), "1000"),
+            (date(2025, 6, 1), "2000"),
+            (date(2026, 6, 1), "4000"),
+        ):
+            _booking(
+                db,
+                hotel["id"],
+                guest["id"],
+                room["id"],
+                check_in,
+                date(check_in.year, check_in.month, check_in.day + 2),
+                price,
+                "CONFIRMED",
+                date(2024, 12, 1),
+            )
+        db.commit()
+    finally:
+        db.close()
+    return hotel
+
+
+def test_popularity_series_totals_cover_full_range_beyond_bucket_cap():
+    hotel = _wide_range_fixtures()
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "range": "all", "group_by": "day"},
+    )
+    ok(r, 200)
+    body = r.json()
+    # The rendered bucket list stays capped for payload size...
+    assert len(body["buckets"]) == 366
+    # ...but the range totals must cover ALL stays, including the one
+    # checking in on 2026-06-01, far past the last rendered bucket.
+    totals = {row["room_type"]: row for row in body["room_types"]}
+    assert totals["Deluxe"]["bookings"] == 3
+    assert totals["Deluxe"]["revenue"] == "7000"
+    # And they must agree with the popularity endpoint for "all".
+    r = client.get(
+        "/api/v1/analytics/room-popularity",
+        params={"hotel_id": hotel["id"], "range": "all"},
+    )
+    ok(r, 200)
+    pop = {row["room_type"]: row for row in r.json()["rooms"]}
+    assert pop["Deluxe"]["bookings"] == totals["Deluxe"]["bookings"]
+    assert pop["Deluxe"]["revenue"] == totals["Deluxe"]["revenue"]
+
+
+def test_kpi_overview_all_range_computes_real_denominators():
+    hotel = _fixtures()
+    r = client.get(
+        "/api/v1/analytics/overview", params={"hotel_id": hotel["id"], "range": "all"}
+    )
+    ok(r, 200)
+    body = r.json()
+    # Fixture stays: ₹8,000 + ₹4,000 + ₹5,000 earned, 5 occupied nights.
+    assert body["total_revenue"] == "17000"
+    assert body["occupied_room_nights"] == 5
+    # The open-ended range must still produce real denominators from
+    # the hotel's activity window — never "of 0 room-nights".
+    assert body["available_room_nights"] > 0
+    assert body["occupancy_rate"] > 0
+    assert Decimal(body["revpar"]) > 0
+    assert Decimal(body["average_daily_revenue"]) > 0
+    assert body["period_days"] > 0
+
+
+def test_kpi_overview_all_range_empty_hotel_stays_zero():
+    hotel = make_hotel()
+    r = client.get(
+        "/api/v1/analytics/overview", params={"hotel_id": hotel["id"], "range": "all"}
+    )
+    ok(r, 200)
+    body = r.json()
+    assert body["total_revenue"] == "0"
+    assert body["available_room_nights"] == 0
+    assert body["occupancy_rate"] == 0
+    assert body["period_days"] == 0
+
+
+def test_popularity_series_month_buckets_keep_years_distinct():
+    hotel = make_hotel()
+    guest = make_guest(hotel["id"])
+    room = make_room(hotel["id"], room_type="Deluxe", capacity=2, total_rooms=5)
+    db = next(get_db())
+    try:
+        _booking(
+            db, hotel["id"], guest["id"], room["id"],
+            date(2025, 10, 10), date(2025, 10, 12), "1000", "CONFIRMED", date(2025, 10, 1),
+        )
+        _booking(
+            db, hotel["id"], guest["id"], room["id"],
+            date(2026, 10, 10), date(2026, 10, 12), "2000", "CONFIRMED", date(2026, 10, 1),
+        )
+        db.commit()
+    finally:
+        db.close()
+    span = {"range": "custom", "start": "2025-01-01", "end": "2026-12-31"}
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "month", **span},
+    )
+    ok(r, 200)
+    buckets = r.json()["buckets"]
+    periods = [b["period"] for b in buckets]
+    # Same month name in different years stays two distinct buckets,
+    # in chronological order (never merged into one "October").
+    assert "2025-10" in periods and "2026-10" in periods
+    assert periods == sorted(periods)
+    by_period = {b["period"]: {c["room_type"]: c for c in b["rooms"]} for b in buckets}
+    assert by_period["2025-10"]["Deluxe"]["revenue"] == "1000"
+    assert by_period["2026-10"]["Deluxe"]["revenue"] == "2000"
+
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "week", **span},
+    )
+    ok(r, 200)
+    week_periods = [b["period"] for b in r.json()["buckets"]]
+    assert week_periods == sorted(week_periods)
+    assert all(date.fromisoformat(p).weekday() == 0 for p in week_periods)

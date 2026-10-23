@@ -1,6 +1,16 @@
 import { useMemo, useState } from "react";
 import type { SeriesPoint } from "../../lib/analyticsApi";
-import { formatPct, inr, inrShort, num, pctChange, periodLabel } from "./format";
+import { EmptyState } from "./ChartCard";
+import {
+  formatPct,
+  inr,
+  inrShort,
+  monthLabel,
+  niceAxisMax,
+  num,
+  pctChange,
+  periodLabel,
+} from "./format";
 
 /** Revenue trend — FOUR MONTHS IN ONE CHART (hand-rolled SVG; the
  * project has no chart dependency).
@@ -9,12 +19,21 @@ import { formatPct, inr, inrShort, num, pctChange, periodLabel } from "./format"
  * existing series API (custom range = that calendar month) and this
  * component aligns the four series on a shared bucket axis:
  *  - group_by "day"   → day-of-month axis (1–31)
- *  - group_by "week"  → week-of-month index (Week 1–5)
- *  - group_by "month" / "year" → one aggregate point per month
+ *  - group_by "week"  → week-of-month index (Week 1–6; Week 1 is the
+ *    Monday-start week containing the 1st, matching the API's
+ *    Monday-keyed buckets — whose key can fall in the previous month)
+ *  - group_by "month" / "year" → each month has a single total; the
+ *    chart switches to a totals view (one labelled point per month,
+ *    on a month-name axis) instead of stacking four dots at one x.
  * A bucket the API did not return for a month is a GAP (null): the
  * line breaks there and the tooltip says "No data" — missing data is
  * never silently plotted as ₹0. A returned bucket with revenue 0 is a
  * genuine zero and IS plotted.
+ *
+ * Lines use monotone cubic interpolation: the previous Catmull-Rom
+ * smoothing overshot sparse data (peaks drawn ABOVE the real maximum,
+ * dips BELOW zero); a monotone curve never leaves the range of a
+ * segment's own endpoints, so the drawing can invent nothing.
  *
  * Series colours are fixed by the design spec and assigned
  * chronologically: teal, blue, purple, orange (MONTH_SERIES_COLORS).
@@ -47,25 +66,56 @@ export interface MonthSeries {
 /** Number of aligned buckets for a grouping. */
 export function bucketCount(groupBy: string): number {
   if (groupBy === "day") return 31;
-  if (groupBy === "week") return 5;
+  if (groupBy === "week") return 6; // a month can span six Monday-weeks
   return 1; // month / year: one aggregate point per month window
 }
 
-/** Align one month's API points onto the shared bucket axis. */
+const DAY_MS = 86400000;
+
+/** Parse a "YYYY-MM-DD" bucket key as UTC milliseconds (no TZ drift). */
+function parseYmd(period: string): number | null {
+  const m = period.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** UTC ms of the Monday starting the week that contains the 1st of
+ * the month "YYYY-MM" — the anchor for week alignment. */
+function firstMondayMs(monthKey: string): number | null {
+  const m = monthKey.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  const first = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
+  const dow = (new Date(first).getUTCDay() + 6) % 7; // days since Monday
+  return first - dow * DAY_MS;
+}
+
+/** Align one month's API points onto the shared bucket axis.
+ * `monthKey` ("YYYY-MM") is the month the points were fetched for. */
 export function alignMonthPoints(
   points: SeriesPoint[],
   groupBy: string,
+  monthKey: string,
 ): (AlignedPoint | null)[] {
   const out: (AlignedPoint | null)[] = Array.from(
     { length: bucketCount(groupBy) },
     () => null,
   );
+  const anchor = groupBy === "week" ? firstMondayMs(monthKey) : null;
   for (const p of points) {
     let idx = 0;
-    if (groupBy === "day" || groupBy === "week") {
+    if (groupBy === "day") {
       const day = Number(p.period.slice(8, 10));
       if (!Number.isFinite(day)) continue;
-      idx = groupBy === "day" ? day - 1 : Math.floor((day - 1) / 7);
+      idx = day - 1;
+    } else if (groupBy === "week") {
+      // Week buckets are keyed by their Monday, which may fall in the
+      // previous month (the week containing the 1st). Index by whole
+      // weeks from that anchor Monday — indexing by the Monday's
+      // day-of-month (the old code) put the first week in "Week 5"
+      // and made two different weeks overwrite one shared slot.
+      const monday = parseYmd(p.period);
+      if (monday === null || anchor === null) continue;
+      idx = Math.round((monday - anchor) / (7 * DAY_MS));
     }
     if (idx >= 0 && idx < out.length) {
       out[idx] = { period: p.period, revenue: num(p.revenue), bookings: p.bookings };
@@ -80,21 +130,52 @@ export function bucketAxisLabel(groupBy: string, idx: number): string {
   return "Month total";
 }
 
-/** Gentle Catmull-Rom → Bézier smoothing; restrained, keeps every
- * data point on the curve (no invented peaks). */
-function smoothPath(pts: [number, number][]): string {
+/** Monotone cubic interpolation (Fritsch–Carlson). Replaces the old
+ * Catmull-Rom smoothing, which overshot sparse data — verified peaks
+ * drawn ~5% ABOVE the data maximum and dips BELOW zero between a
+ * zero and a sharp rise. A monotone curve stays within each segment's
+ * endpoint range, so it can never invent revenue or go negative. */
+function monotonePath(pts: [number, number][]): string {
   if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : "";
+  const n = pts.length;
+  const dx: number[] = [];
+  const slope: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0]);
+    slope.push((pts[i + 1][1] - pts[i][1]) / (dx[i] || 1));
+  }
+  const m: number[] = new Array<number>(n).fill(0);
+  m[0] = slope[0];
+  m[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = (slope[i - 1] + slope[i]) / 2;
+    // At a local extremum (or next to a flat segment) the tangent
+    // must be flat: an averaged non-zero tangent there guarantees an
+    // overshoot beyond the peak/valley value.
+    if (slope[i - 1] * slope[i] <= 0) m[i] = 0;
+  }
+  for (let i = 0; i < n - 1; i++) {
+    if (slope[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / slope[i];
+    const b = m[i + 1] / slope[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const t = 3 / Math.sqrt(s);
+      m[i] = t * a * slope[i];
+      m[i + 1] = t * b * slope[i];
+    }
+  }
   let d = `M${pts[0][0]},${pts[0][1]}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(0, i - 1)];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[Math.min(pts.length - 1, i + 2)];
-    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
-    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
-    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
-    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
-    d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0]},${p2[1]}`;
+  for (let i = 0; i < n - 1; i++) {
+    const c1x = pts[i][0] + dx[i] / 3;
+    const c1y = pts[i][1] + (m[i] * dx[i]) / 3;
+    const c2x = pts[i + 1][0] - dx[i] / 3;
+    const c2y = pts[i + 1][1] - (m[i + 1] * dx[i]) / 3;
+    d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${pts[i + 1][0]},${pts[i + 1][1]}`;
   }
   return d;
 }
@@ -124,16 +205,22 @@ export function RevenueTrendChart({
   groupBy: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const n = bucketCount(groupBy);
+  /** Month/Year groupings give each month a single total: render a
+   * totals view (one point per month on a month-name axis). Stacking
+   * all four totals at one shared x (the old behaviour) read as a
+   * broken trend. */
+  const totalsMode = bucketCount(groupBy) === 1;
+  const n = totalsMode ? months.length : bucketCount(groupBy);
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
   const max = Math.max(
     1,
     ...months.flatMap((m) => m.points.map((p) => p?.revenue ?? 0)),
   );
+  const axisMax = niceAxisMax(max);
   const x = (i: number) => (n > 1 ? PAD.l + (i / (n - 1)) * innerW : PAD.l + innerW / 2);
-  const y = (v: number) => PAD.t + innerH - (v / max) * innerH;
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => max * f);
+  const y = (v: number) => PAD.t + innerH - (v / axisMax) * innerH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => axisMax * f);
   const labelEvery = groupBy === "day" ? 5 : 1;
 
   const monthRuns = useMemo(
@@ -142,6 +229,8 @@ export function RevenueTrendChart({
   );
 
   const grandTotal = months.reduce((s, m) => s + m.total, 0);
+  const hasAnyPoint = months.some((m) => m.points.some((p) => p !== null));
+  const hoverMonth = totalsMode && hover !== null ? months[hover] : undefined;
 
   return (
     <div>
@@ -175,6 +264,9 @@ export function RevenueTrendChart({
         })}
       </div>
 
+      {!hasAnyPoint ? (
+        <EmptyState message="No revenue data is available for the selected period." />
+      ) : (
       <div className="relative">
         <svg
           viewBox={`0 0 ${W} ${H}`}
@@ -205,39 +297,63 @@ export function RevenueTrendChart({
             </g>
           ))}
 
-          {months.map((m, mi) =>
-            monthRuns[mi].map((run, ri) => {
-              const pts = run.map(
-                ({ idx, point }): [number, number] => [x(idx), y(point.revenue)],
-              );
+          {!totalsMode &&
+            months.map((m, mi) =>
+              monthRuns[mi].map((run, ri) => {
+                const pts = run.map(
+                  ({ idx, point }): [number, number] => [x(idx), y(point.revenue)],
+                );
+                return (
+                  <g key={`${m.key}-${ri}`}>
+                    {pts.length > 1 ? (
+                      <>
+                        <path
+                          d={`${monotonePath(pts)}L${pts[pts.length - 1][0]},${PAD.t + innerH}L${pts[0][0]},${PAD.t + innerH}Z`}
+                          fill={m.color}
+                          fillOpacity={0.1}
+                          stroke="none"
+                        />
+                        <path
+                          d={monotonePath(pts)}
+                          fill="none"
+                          stroke={m.color}
+                          strokeWidth={2.5}
+                          strokeLinejoin="round"
+                        />
+                      </>
+                    ) : null}
+                    {pts.map(([cx, cy], pi) => (
+                      <circle key={pi} cx={cx} cy={cy} r={3.2} fill="#fff" stroke={m.color} strokeWidth={2}>
+                        <title>{`${m.label} · ${periodLabel(run[pi].point.period, "full")}: ${inr(run[pi].point.revenue)} · ${run[pi].point.bookings} bookings`}</title>
+                      </circle>
+                    ))}
+                  </g>
+                );
+              }),
+            )}
+
+          {totalsMode &&
+            months.map((m, mi) => {
+              const p = m.points[0];
+              if (!p) return null;
+              const cx = x(mi);
+              const cy = y(p.revenue);
               return (
-                <g key={`${m.key}-${ri}`}>
-                  {pts.length > 1 ? (
-                    <>
-                      <path
-                        d={`${smoothPath(pts)}L${pts[pts.length - 1][0]},${PAD.t + innerH}L${pts[0][0]},${PAD.t + innerH}Z`}
-                        fill={m.color}
-                        fillOpacity={0.1}
-                        stroke="none"
-                      />
-                      <path
-                        d={smoothPath(pts)}
-                        fill="none"
-                        stroke={m.color}
-                        strokeWidth={2.5}
-                        strokeLinejoin="round"
-                      />
-                    </>
-                  ) : null}
-                  {pts.map(([cx, cy], pi) => (
-                    <circle key={pi} cx={cx} cy={cy} r={3.2} fill="#fff" stroke={m.color} strokeWidth={2}>
-                      <title>{`${m.label} · ${periodLabel(run[pi].point.period, "full")}: ${inr(run[pi].point.revenue)} · ${run[pi].point.bookings} bookings`}</title>
-                    </circle>
-                  ))}
+                <g key={m.key}>
+                  <circle cx={cx} cy={cy} r={5} fill="#fff" stroke={m.color} strokeWidth={2.5}>
+                    <title>{`${m.label}: ${inr(p.revenue)} · ${p.bookings} bookings`}</title>
+                  </circle>
+                  <text
+                    x={cx}
+                    y={cy - 12}
+                    textAnchor="middle"
+                    className="fill-[#102A43] text-[12px] font-semibold tabular-nums"
+                  >
+                    {inrShort(p.revenue)}
+                  </text>
                 </g>
               );
-            }),
-          )}
+            })}
 
           {hover !== null ? (
             <line
@@ -251,19 +367,31 @@ export function RevenueTrendChart({
             />
           ) : null}
 
-          {Array.from({ length: n }, (_, i) =>
-            i % labelEvery === 0 || i === n - 1 ? (
-              <text
-                key={i}
-                x={x(i)}
-                y={H - 8}
-                textAnchor="middle"
-                className="fill-[#8293A5] text-[11px]"
-              >
-                {groupBy === "day" ? String(i + 1) : bucketAxisLabel(groupBy, i)}
-              </text>
-            ) : null,
-          )}
+          {totalsMode
+            ? months.map((m, i) => (
+                <text
+                  key={m.key}
+                  x={x(i)}
+                  y={H - 8}
+                  textAnchor="middle"
+                  className="fill-[#8293A5] text-[11px]"
+                >
+                  {monthLabel(m.key, "short")}
+                </text>
+              ))
+            : Array.from({ length: n }, (_, i) =>
+                i % labelEvery === 0 || i === n - 1 ? (
+                  <text
+                    key={i}
+                    x={x(i)}
+                    y={H - 8}
+                    textAnchor="middle"
+                    className="fill-[#8293A5] text-[11px]"
+                  >
+                    {groupBy === "day" ? String(i + 1) : bucketAxisLabel(groupBy, i)}
+                  </text>
+                ) : null,
+              )}
         </svg>
 
         {hover !== null ? (
@@ -274,10 +402,12 @@ export function RevenueTrendChart({
               left: `${Math.min(88, Math.max(12, (x(hover) / W) * 100))}%`,
             }}
           >
-            <p className="font-semibold text-[#102A43]">{bucketAxisLabel(groupBy, hover)}</p>
+            <p className="font-semibold text-[#102A43]">
+              {totalsMode && hoverMonth ? hoverMonth.label : bucketAxisLabel(groupBy, hover)}
+            </p>
             <ul className="mt-1 space-y-1">
-              {months.map((m) => {
-                const point = m.points[hover];
+              {(totalsMode && hoverMonth ? [hoverMonth] : months).map((m) => {
+                const point = totalsMode ? m.points[0] : m.points[hover];
                 return (
                   <li key={m.key} className="flex items-baseline gap-1.5 tabular-nums text-[#52677D]">
                     <span
@@ -300,12 +430,13 @@ export function RevenueTrendChart({
           </div>
         ) : null}
       </div>
+      )}
       <p className="mt-1 text-[11px] text-[#8293A5]">
         {groupBy === "day"
           ? "Aligned by day of month. Days a month does not have (or with no recorded activity) are gaps, not zeros."
           : groupBy === "week"
-            ? "Aligned by week within the month (weeks start Monday, matching the API buckets)."
-            : "Each month is aggregated to a single point."}
+            ? "Aligned by week within the month — Week 1 is the Monday-start week containing the 1st, matching the API buckets."
+            : "Each month is shown as a single total."}
       </p>
     </div>
   );
@@ -319,15 +450,19 @@ export function HourlyTrendChart({ points }: { points: SeriesPoint[] }) {
   const n = points.length;
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
-  const max = Math.max(1, ...points.map((p) => num(p.revenue)));
+  const axisMax = niceAxisMax(Math.max(1, ...points.map((p) => num(p.revenue))));
   const x = (i: number) => (n > 1 ? PAD.l + (i / (n - 1)) * innerW : PAD.l + innerW / 2);
-  const y = (v: number) => PAD.t + innerH - (v / max) * innerH;
-  const ticks = [0, 0.5, 1].map((f) => max * f);
+  const y = (v: number) => PAD.t + innerH - (v / axisMax) * innerH;
+  const ticks = [0, 0.5, 1].map((f) => axisMax * f);
   const pts = points.map((p, i): [number, number] => [x(i), y(num(p.revenue))]);
   const hoverPoint = hover !== null ? points[hover] : undefined;
 
   if (!points.length) {
-    return <p className="py-10 text-center text-sm text-[#8293A5]">No revenue in this period yet.</p>;
+    return (
+      <p className="py-10 text-center text-sm text-[#8293A5]">
+        No revenue data is available for the selected period.
+      </p>
+    );
   }
   return (
     <div>
@@ -360,12 +495,12 @@ export function HourlyTrendChart({ points }: { points: SeriesPoint[] }) {
           {pts.length > 1 ? (
             <>
               <path
-                d={`${smoothPath(pts)}L${pts[pts.length - 1][0]},${PAD.t + innerH}L${pts[0][0]},${PAD.t + innerH}Z`}
+                d={`${monotonePath(pts)}L${pts[pts.length - 1][0]},${PAD.t + innerH}L${pts[0][0]},${PAD.t + innerH}Z`}
                 fill="#0F9D94"
                 fillOpacity={0.12}
                 stroke="none"
               />
-              <path d={smoothPath(pts)} fill="none" stroke="#0F9D94" strokeWidth={2.5} strokeLinejoin="round" />
+              <path d={monotonePath(pts)} fill="none" stroke="#0F9D94" strokeWidth={2.5} strokeLinejoin="round" />
             </>
           ) : null}
           {pts.map(([cx, cy], i) => (

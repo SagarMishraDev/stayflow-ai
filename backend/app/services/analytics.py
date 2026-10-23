@@ -148,6 +148,34 @@ def _days(start: date | None, end: date | None) -> int:
     return max((end - start).days, 0)
 
 
+def _effective_window(
+    bookings: list[Booking], start: date | None, end: date | None, *, today: date
+) -> tuple[date | None, date | None]:
+    """Fill open range bounds from the hotel's own stay activity.
+
+    Bounded ranges are returned unchanged. For an open bound (the
+    ``all`` range) the denominator window becomes the hotel's actual
+    activity span — first non-cancelled check-in through the later of
+    the last check-out and tomorrow — so available room-nights,
+    occupancy, RevPAR and daily averages are computed over a real
+    period instead of silently collapsing to zero. A hotel with no
+    non-cancelled stays keeps its open bounds (denominators stay 0,
+    which the UI renders as an honest empty state).
+    """
+    if start is not None and end is not None:
+        return start, end
+    stays = [b for b in bookings if b.booking_status != "CANCELLED"]
+    if not stays:
+        return start, end
+    eff_start = start if start is not None else min(b.check_in for b in stays)
+    eff_end = (
+        end
+        if end is not None
+        else max(max(b.check_out for b in stays), today + timedelta(days=1))
+    )
+    return eff_start, eff_end
+
+
 def _bookings(db: Session, hotel_id: int) -> list[Booking]:
     return list(db.scalars(select(Booking).where(Booking.hotel_id == hotel_id)).all())
 
@@ -218,7 +246,10 @@ def kpi_overview(
 ) -> dict:
     tz = _hotel_tz(db, hotel_id)
     bookings = _bookings(db, hotel_id)
-    days = _days(start, end)
+    # Denominators (available nights, occupancy, RevPAR, daily average,
+    # period_days) use the effective window: identical to the requested
+    # bounds for bounded ranges, the hotel's activity span for "all".
+    days = _days(*_effective_window(bookings, start, end, today=today))
     earned = _earned(bookings, start, end)
     stays = _stay_bookings(bookings, start, end)
 
@@ -456,8 +487,8 @@ def room_popularity(
     """Per room-type popularity. Booking count, revenue and occupancy are
     three distinct metrics and are reported side by side, never merged."""
     tz = _hotel_tz(db, hotel_id)
-    days = _days(start, end)
     bookings = _bookings(db, hotel_id)
+    days = _days(*_effective_window(bookings, start, end, today=today))
     rooms = list(db.scalars(select(Room).where(Room.hotel_id == hotel_id)).all())
     rows: list[dict] = []
     for room in rooms:
@@ -548,8 +579,8 @@ def popularity_series(
     """
     if group_by not in ("day", "week", "month", "year"):
         raise ValueError(f"unsupported group_by: {group_by}")
-    days = _days(start, end)
     bookings = _bookings(db, hotel_id)
+    days = _days(*_effective_window(bookings, start, end, today=today))
     rooms = list(db.scalars(select(Room).where(Room.hotel_id == hotel_id)).all())
     stays = _stay_bookings(bookings, start, end)
 
@@ -565,7 +596,10 @@ def popularity_series(
         eff_start, eff_end = start, end
     starts = _bucket_starts(eff_start, eff_end, group_by) if eff_end > eff_start else []
     # Safety cap: a day-grouped multi-decade range must not produce an
-    # unbounded payload (366 buckets ≈ one leap year of days).
+    # unbounded payload (366 buckets ≈ one leap year of days). The cap
+    # bounds ONLY this rendered bucket list — the ``room_types`` totals
+    # below are aggregated from the full stay set and always cover the
+    # entire selected range.
     starts = starts[:366]
 
     per_bucket: dict[str, dict[int, dict]] = {
@@ -581,16 +615,25 @@ def popularity_series(
             cell["bookings"] += 1
             cell["revenue"] += b.final_price
 
+    # Range totals are aggregated from the stays themselves, NEVER from
+    # the bucket list: the bucket list is capped at 366 entries for
+    # payload size, so totals derived from it silently dropped every
+    # booking past the cap on wide ranges (e.g. day-grouped "all").
+    totals_by_room: dict[int, dict] = {
+        room.id: {"bookings": 0, "revenue": ZERO} for room in rooms
+    }
+    for b in stays:
+        entry = totals_by_room.get(b.room_id)
+        if entry is not None:
+            entry["bookings"] += 1
+            entry["revenue"] += b.final_price
+
     room_type_rows: list[dict] = []
     for room in rooms:
         room_bookings = [b for b in bookings if b.room_id == room.id]
         occupied = _occupied_room_nights(room_bookings, start, end)
         available = room.total_rooms * days if room.is_active else 0
-        totals = {"bookings": 0, "revenue": ZERO}
-        for bucket_cells in per_bucket.values():
-            cell = bucket_cells[room.id]
-            totals["bookings"] += cell["bookings"]
-            totals["revenue"] += cell["revenue"]
+        totals = totals_by_room[room.id]
         room_type_rows.append(
             {
                 "room_id": room.id,

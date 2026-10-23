@@ -28,6 +28,18 @@ function trimZero(s: string): string {
   return s.endsWith(".0") ? s.slice(0, -2) : s;
 }
 
+/** Smallest "nice" axis maximum (1 / 2 / 2.5 / 5 / 10 × 10^n) that
+ * covers `v`, so chart Y axes tick on readable values (₹26k, ₹34.6k…)
+ * instead of the raw data maximum, and the top series point sits just
+ * inside the plot instead of on its edge. */
+export function niceAxisMax(v: number): number {
+  if (!(v > 0) || !Number.isFinite(v)) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const unit = v / pow;
+  const nice = unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Human label for a series bucket key:

@@ -252,16 +252,28 @@ export default function Analytics() {
   );
   const monthQueries = useQueries({
     queries: monthWindows.map((w) => ({
+      // The key MUST carry the selected page range: different ranges
+      // ending in the same month (This month / This year / All time)
+      // resolve to identical month windows, so a key built only from
+      // the window + groupBy kept serving the earlier fetch — with
+      // the app-wide staleTime that rendered pre-change data (e.g.
+      // values from before a data import) under the new range label.
+      // staleTime 0 makes a range switch always refetch current data.
       queryKey: [
         "analytics",
-        "series",
+        "series-month",
         hotelId,
-        { range: "custom", start: w.start, end: w.end },
+        range,
+        range === "custom" ? from : "",
+        range === "custom" ? to : "",
+        w.start,
+        w.end,
         groupBy,
       ],
       queryFn: () =>
         fetchSeries(hotelId!, { range: "custom", start: w.start, end: w.end }, groupBy),
       enabled: ready && groupBy !== "hour",
+      staleTime: 0,
     })),
   });
   const monthSeries: MonthSeries[] = useMemo(
@@ -274,7 +286,7 @@ export default function Analytics() {
           color: MONTH_SERIES_COLORS[i % MONTH_SERIES_COLORS.length],
           total: points.reduce((s, p) => s + num(p.revenue), 0),
           bookings: points.reduce((s, p) => s + p.bookings, 0),
-          points: alignMonthPoints(points, groupBy),
+          points: alignMonthPoints(points, groupBy, w.key),
         };
       }),
     [monthWindows, monthQueries, groupBy],
@@ -671,18 +683,36 @@ export default function Analytics() {
               seriesQ.isLoading ? (
                 <ChartSkeleton height={300} />
               ) : seriesQ.isError ? (
-                <p className="py-10 text-center text-sm text-[#C22F2F]">
-                  The revenue series could not be loaded.
-                </p>
+                <div className="py-10 text-center">
+                  <p className="text-sm text-[#C22F2F]">
+                    The revenue series could not be loaded.
+                  </p>
+                  <button
+                    type="button"
+                    className="ax-btn mt-3"
+                    onClick={() => void seriesQ.refetch()}
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : (
                 <HourlyTrendChart points={seriesQ.data ?? []} />
               )
             ) : monthsLoading ? (
               <ChartSkeleton height={300} />
             ) : monthsError ? (
-              <p className="py-10 text-center text-sm text-[#C22F2F]">
-                The revenue series could not be loaded.
-              </p>
+              <div className="py-10 text-center">
+                <p className="text-sm text-[#C22F2F]">
+                  The revenue series could not be loaded.
+                </p>
+                <button
+                  type="button"
+                  className="ax-btn mt-3"
+                  onClick={() => monthQueries.forEach((q) => void q.refetch())}
+                >
+                  Retry
+                </button>
+              </div>
             ) : (
               <RevenueTrendChart months={monthSeries} groupBy={groupBy} />
             )}
@@ -717,9 +747,18 @@ export default function Analytics() {
             {popularitySeriesQ.isLoading ? (
               <ChartSkeleton height={320} />
             ) : popularitySeriesQ.isError ? (
-              <p className="py-10 text-center text-sm text-[#C22F2F]">
-                Room popularity could not be loaded.
-              </p>
+              <div className="py-10 text-center">
+                <p className="text-sm text-[#C22F2F]">
+                  Room popularity could not be loaded.
+                </p>
+                <button
+                  type="button"
+                  className="ax-btn mt-3"
+                  onClick={() => void popularitySeriesQ.refetch()}
+                >
+                  Retry
+                </button>
+              </div>
             ) : popData ? (
               <>
                 {sortedTypes.length > 0 ? (

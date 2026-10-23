@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { PopularityRow, PopularitySeries } from "../../lib/analyticsApi";
+import { EmptyState } from "./ChartCard";
 import { inr, periodLabel } from "./format";
 
 /** Room popularity — GROUPED VERTICAL BARS (replaced the bubble chart
@@ -13,12 +14,19 @@ import { inr, periodLabel } from "./format";
  * the shared room-type colour map — the same colours used by the
  * legend, the category donut and the performance table.
  *
- * Dense day views scroll horizontally inside the card instead of
- * crushing labels together.
+ * Sizing is BOUNDED and 1:1 with the viewBox: the SVG renders at
+ * exactly W×H px (H = 300) and dense day views scroll horizontally
+ * inside the card. The old code set width:"100%" with no height for
+ * narrow viewBoxes, so few-bucket views (Month/Year = 1 bucket,
+ * W ≈ 105) were stretched to the card width and grew to 1000px+
+ * tall through aspect-ratio scaling.
  */
 
 const H = 300;
 const PAD = { l: 40, r: 10, t: 16, b: 30 };
+/** Minimum rendered plot width: slots widen to reach it on
+ * few-bucket views so bars stay readable at the fixed height. */
+const MIN_CHART_W = 520;
 
 interface ActiveCell {
   bucket: string;
@@ -41,24 +49,33 @@ export function RoomPopularityBars({
 }) {
   const [active, setActive] = useState<ActiveCell | null>(null);
   const buckets = data.buckets;
-  if (!buckets.length || !orderedTypes.length) {
-    return (
-      <p className="py-8 text-center text-sm text-[#8293A5]">
-        No room activity in this period yet.
-      </p>
-    );
+  const totalBookings = buckets.reduce(
+    (s, b) => s + b.rooms.reduce((t, c) => t + c.bookings, 0),
+    0,
+  );
+  if (!buckets.length || !orderedTypes.length || totalBookings === 0) {
+    // The API zero-fills buckets for bounded ranges, so an all-zero
+    // response arrives WITH buckets — it is still "no bookings" and
+    // gets the empty state rather than a field of invisible bars.
+    return <EmptyState message="No room bookings are available for the selected period." />;
   }
   const typeCount = orderedTypes.length;
   const maxBookings = Math.max(
     1,
     ...buckets.flatMap((b) => b.rooms.map((c) => c.bookings)),
   );
-  const slotW = Math.max(30, typeCount * 15 + 10);
+  const slotW = Math.max(
+    typeCount * 15 + 10,
+    Math.ceil((MIN_CHART_W - PAD.l - PAD.r) / buckets.length),
+    30,
+  );
   const W = PAD.l + PAD.r + slotW * buckets.length;
   const innerH = H - PAD.t - PAD.b;
   const innerW = W - PAD.l - PAD.r;
-  const barW = Math.min(14, (slotW - 8) / typeCount);
-  const ticks = [0, 0.5, 1].map((f) => Math.round(maxBookings * f));
+  const barW = Math.min(28, Math.max(4, (slotW - 8) / typeCount));
+  const ticks = Array.from(
+    new Set([0, 0.5, 1].map((f) => Math.round(maxBookings * f))),
+  );
   const labelEvery = buckets.length > 40 ? Math.ceil(buckets.length / 24) : 1;
 
   const shown =
@@ -93,7 +110,7 @@ export function RoomPopularityBars({
       <div className="overflow-x-auto">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          style={{ minWidth: Math.min(W, 560), width: W > 560 ? W : "100%" }}
+          style={{ width: W, height: H, minWidth: W }}
           className="block"
           role="img"
           aria-label={`Room popularity grouped bar chart: bookings per ${data.group_by} bucket by room type`}
