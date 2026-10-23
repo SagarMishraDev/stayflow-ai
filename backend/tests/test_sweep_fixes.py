@@ -672,3 +672,176 @@ def test_hindi_next_weekend_note_reaches_prompt_with_correct_dates():
     # imminent Saturday and the note carried those wrong dates).
     assert f"check-in {next_saturday.isoformat()}" in system
     assert f"check-in {imminent_saturday.isoformat()}" not in system
+
+
+# ---------------------------------------------------------------------------
+# Round 4 (post-deploy live re-test #3): the Round-3 pre-retrieval note
+# still failed the Hindi pool question live, 0/2 — but the replies
+# quoted the CHECK-IN chunk (welcome envelope), proving injection ran
+# and surfaced the wrong material. Diagnosis against the REAL demo
+# knowledge set (the 5 documents of scripts/seed_knowledge.py and the
+# 4 FAQs of scripts/seed_demo.py, hashed embeddings):
+#
+# - Hindi pool query: the plunge-pool chunk ranked 6th of 10 chunks
+#   (cosine 0.0950), behind both cancellation chunks and the check-in
+#   chunk — generic expansion words ("timings", "hours", "open") are
+#   scattered across every document, the discriminative word "pool"
+#   sits in ONE 120-word chunk, and "swimming" occurs nowhere in the
+#   knowledge base. Top-3 cut => the spa chunk was never injected.
+# - Hinglish "pool ka timing kya hai?" ranked it 4th (0.2281).
+# - search_faq (no ranking, ANY-word match) returned ONLY the
+#   airport-transfers FAQ for the Hindi pool query — matched via the
+#   word "hours" in "book at least 4 hours ahead".
+# - The greeting "hello" scored 0.1075 against the spa chunk through
+#   a pure hash-bucket collision (no shared token) and WAS injected.
+#
+# The Round-1/3 fixtures never showed any of this: a lone short spa
+# document + a pool FAQ have no competitors. These tests therefore
+# seed the actual demo content, competitors included.
+# ---------------------------------------------------------------------------
+
+
+def _seed_realistic_demo_content(hotel_id):
+    """Seed the content the live demo actually runs: the 5 documents
+    from scripts/seed_knowledge.py (check-in instructions with the
+    welcome-envelope text competing against the spa document) and the
+    4 FAQs from scripts/seed_demo.py (none of them about a pool)."""
+    import importlib.util
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+
+    def _load(name):
+        spec = importlib.util.spec_from_file_location(name, scripts / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    seed_knowledge = _load("seed_knowledge")
+    seed_demo = _load("seed_demo")
+
+    db = SessionLocal()
+    try:
+        repo = KnowledgeRepository(db, default_embedding_provider())
+        for title, content in seed_knowledge.DOCS:
+            repo.create_document(
+                hotel_id=hotel_id, title=title, content=content, source="test"
+            )
+        for question, answer, category in seed_demo.FAQS:
+            db.add(
+                FAQ(
+                    hotel_id=hotel_id,
+                    question=question,
+                    answer=answer,
+                    category=category,
+                    is_active=True,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _injected_note(system_prompt: str) -> str:
+    """The RETRIEVED HOTEL KNOWLEDGE section of a captured prompt."""
+    assert "RETRIEVED HOTEL KNOWLEDGE" in system_prompt
+    return system_prompt.split("RETRIEVED HOTEL KNOWLEDGE", 1)[1].split(
+        "Answer the guest's question", 1
+    )[0]
+
+
+def test_hindi_pool_query_injects_plunge_pool_from_realistic_demo_content():
+    hotel = make_hotel()
+    _seed_realistic_demo_content(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "स्विमिंग पूल का समय क्या है?", provider)
+    note = _injected_note(provider.messages[0]["content"])
+    # The grounded facility chunk reaches generation, first in the note.
+    assert "plunge pool" in note
+    assert "Serenity Spa" in note
+    assert note.index("plunge pool") < note.index("welcome envelope")
+    # The airport FAQ matched the pre-fix note only via the generic
+    # word "hours"; the topic filter drops it for a pool question.
+    assert "airport transfers" not in note.lower()
+
+
+def test_english_pool_query_injects_plunge_pool_from_realistic_demo_content():
+    hotel = make_hotel()
+    _seed_realistic_demo_content(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "What are the swimming pool timings?", provider)
+    note = _injected_note(provider.messages[0]["content"])
+    assert "plunge pool" in note
+    assert "Serenity Spa" in note
+
+
+def test_hinglish_pool_query_injects_plunge_pool_from_realistic_demo_content():
+    hotel = make_hotel()
+    _seed_realistic_demo_content(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "pool ka timing kya hai?", provider)
+    note = _injected_note(provider.messages[0]["content"])
+    # Pre-fix this query ranked the plunge-pool chunk 4th — outside
+    # the injected top-3 — and injected the fitness chunk instead.
+    assert "plunge pool" in note
+    assert "Serenity Spa" in note
+
+
+def test_greeting_injects_nothing_from_realistic_demo_content():
+    hotel = make_hotel()
+    _seed_realistic_demo_content(hotel["id"])
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel["id"], "hello", provider)
+    system = provider.messages[0]["content"]
+    # Pre-fix, "hello" scored 0.1075 against the spa chunk through a
+    # hash-bucket collision (no shared token) and it WAS injected.
+    assert "RETRIEVED HOTEL KNOWLEDGE" not in system
+
+
+def test_exact_term_scan_never_crosses_hotels():
+    hotel_a = make_hotel()
+    _seed_realistic_demo_content(hotel_a["id"])
+    hotel_b = make_hotel()
+    db = SessionLocal()
+    try:
+        repo = KnowledgeRepository(db, default_embedding_provider())
+        repo.create_document(
+            hotel_id=hotel_b["id"],
+            title="Zorblax Spa guide",
+            content=(
+                "The Zorblax Spa plunge pool is open around the clock "
+                "for Zorblax guests only."
+            ),
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    provider = _CapturingLlmProvider()
+    _run_with_provider(hotel_a["id"], "स्विमिंग पूल का समय क्या है?", provider)
+    system = provider.messages[0]["content"]
+    assert "Serenity Spa" in system  # hotel A's own chunk, via the scan
+    assert "Zorblax" not in system  # hotel B's chunk never leaks
+
+
+def test_targeted_terms_and_matching_helpers():
+    from app.agent.query_terms import targeted_terms, text_matches_term
+
+    hindi = targeted_terms("स्विमिंग पूल का समय क्या है?")
+    assert "pool" in hindi
+    # The generic time entry never counts as a targeted term.
+    assert "timings hours open" not in hindi
+    assert "pool" in targeted_terms("pool ka timing kya hai?")
+    assert "pool" in targeted_terms("What are the swimming pool timings?")
+    assert "check-in" in targeted_terms("चेक-इन का समय क्या है?")
+    assert targeted_terms("hello") == []
+
+    # Token-boundary matching: no substring false positives, and
+    # hyphenation differences do not hide a real match.
+    assert text_matches_term("The wellness area has a plunge pool.", "pool")
+    assert not text_matches_term("The pool is spacious.", "spa")
+    assert text_matches_term("Is Wi-Fi free?", "wifi internet")
+    assert text_matches_term("Check-in is from 2 PM.", "check-in")
+    # Generic time words alone never make a text "about" a term.
+    assert not text_matches_term("Book at least 4 hours ahead.", "pool")

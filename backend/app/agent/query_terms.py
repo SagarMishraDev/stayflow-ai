@@ -68,3 +68,86 @@ def expand_query(query: str) -> str:
     if not additions:
         return text
     return text + " " + " ".join(additions)
+
+
+# --------------------------------------------------------------------- #
+# Targeted terms + exact-term matching (Round 4)                         #
+# --------------------------------------------------------------------- #
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+# The समय entry's canonical keywords are generic time words: they say
+# WHEN, not WHAT, and they appear in nearly every hotel document
+# ("24 hours before check-in", "breakfast timings", "open daily"), so
+# they can never identify a facility/topic on their own.
+_GENERIC_CANONICAL = frozenset({"timings hours open"})
+_GENERIC_WORDS = frozenset({"timings", "hours", "open"})
+
+
+def text_tokens(text: str) -> list[str]:
+    """Lowercase ``[a-z0-9]+`` tokens — the same tokenisation the
+    hashed embedding provider uses."""
+    return _TOKEN_RE.findall((text or "").lower())
+
+
+def text_contains_term(text: str, term: str) -> bool:
+    """True when ``term`` occurs in ``text`` as whole tokens.
+
+    Token-based, so "spa" never matches "space". Hyphen-tolerant:
+    consecutive tokens may join to form the term, so the term "wifi"
+    matches the text "wi-fi" and the term "check-in" matches "checkin".
+    """
+    tokens = text_tokens(text)
+    term_tokens = text_tokens(term)
+    if not tokens or not term_tokens:
+        return False
+    target = "".join(term_tokens)
+    for i in range(len(tokens)):
+        joined = ""
+        for j in range(i, len(tokens)):
+            joined += tokens[j]
+            if joined == target:
+                return True
+            if len(joined) >= len(target):
+                break
+    return False
+
+
+def text_matches_term(text: str, term: str) -> bool:
+    """True when ``text`` is about the canonical ``term``: the term
+    phrase itself occurs in it, or one of the term's significant
+    constituent words (length >= 3, not a generic time word) occurs as
+    a whole token."""
+    if text_contains_term(text, term):
+        return True
+    return any(
+        text_contains_term(text, token)
+        for token in text_tokens(term)
+        if len(token) >= 3 and token not in _GENERIC_WORDS
+    )
+
+
+def targeted_terms(query: str) -> list[str]:
+    """Canonical English facility/topic terms ``query`` targets.
+
+    A term-map entry counts when one of its Hindi/Hinglish variants
+    matches, or when the canonical English term (or its head word) is
+    itself present in the query — so the Hindi, Hinglish and English
+    phrasings of a question target the same terms. The generic time
+    entry is excluded (see ``_GENERIC_CANONICAL``).
+    """
+    text = (query or "").strip()
+    if not text:
+        return []
+    lowered = text.lower()
+    terms: list[str] = []
+    for variants, canonical in _TERM_MAP:
+        if canonical in _GENERIC_CANONICAL:
+            continue
+        if (
+            any(_variant_matches(lowered, variant) for variant in variants)
+            or text_contains_term(lowered, canonical)
+            or text_contains_term(lowered, canonical.split()[0])
+        ):
+            terms.append(canonical)
+    return terms

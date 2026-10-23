@@ -39,6 +39,12 @@ from app.agent.language import (
 )
 from app.agent.prompts import build_system_prompt
 from app.agent.providers.base import LLMResponse, ProviderContext, ProviderError
+from app.agent.query_terms import (
+    expand_query,
+    targeted_terms,
+    text_matches_term,
+    text_tokens,
+)
 from app.agent.relative_dates import resolve_relative_stay
 from app.agent.tools.registry import ToolContext, ToolRegistry, build_registry
 from app.models.guest import Guest
@@ -184,6 +190,51 @@ def _date_resolution_note(message: str, today: date) -> str:
     )
 
 
+def _exact_term_chunks(
+    db: Session, ctx: ToolContext, message: str, terms: list[str]
+) -> list[dict[str, Any]]:
+    """Knowledge chunks that literally mention a targeted term.
+
+    The cosine ranking alone cannot be trusted to surface them (see
+    the Round-4 note in :func:`_retrieved_knowledge_note`), so a chunk
+    containing the very facility term the guest asked about is
+    guaranteed a place in the note, ordered by cosine among
+    themselves. Reads go through ``KnowledgeRepository.list_chunks`` —
+    the same hotel-scoped boundary the retriever uses — so isolation
+    is unchanged. Any failure degrades to the fuzzy results alone.
+    """
+    # Deferred for the same reason as the tool imports below, and so a
+    # knowledge-layer problem can never break importing the runner.
+    from app.knowledge import (
+        KnowledgeRepository,
+        cosine_similarity,
+        default_embedding_provider,
+    )
+
+    try:
+        provider = default_embedding_provider()
+        chunks = KnowledgeRepository(db, provider).list_chunks(ctx.hotel_id)
+        if not chunks:
+            return []
+        query_vector = provider.embed(expand_query(message))
+        hits = [
+            (cosine_similarity(query_vector, chunk.embedding), chunk)
+            for chunk in chunks
+            if any(text_matches_term(chunk.content, term) for term in terms)
+        ]
+    except Exception:  # noqa: BLE001 - the guarantee must never break the chat
+        logger.exception("Exact-term knowledge scan failed; continuing without it")
+        return []
+    hits.sort(key=lambda pair: pair[0], reverse=True)
+    return [
+        {
+            "title": chunk.document.title if chunk.document else "",
+            "content": chunk.content,
+        }
+        for _, chunk in hits[:3]
+    ]
+
+
 def _retrieved_knowledge_note(db: Session, ctx: ToolContext, message: str) -> str:
     """Deterministic knowledge pre-retrieval for LLM-backed providers.
 
@@ -200,6 +251,42 @@ def _retrieved_knowledge_note(db: Session, ctx: ToolContext, message: str) -> st
     is injected when nothing matches, so greetings and booking slot
     replies carry no extra noise. A retrieval failure must never break
     the chat: log it and continue without the note.
+
+    Round 4 — the handlers' raw output is NOT injected verbatim any
+    more, because against the real demo knowledge set (5 documents,
+    10 chunks, hashed embeddings) the fuzzy ranking demonstrably
+    buries the answer, in every language but English:
+
+    - Hindi pool query: the plunge-pool chunk ranked 6th of 10
+      (cosine 0.0950), behind both cancellation-policy chunks and the
+      check-in chunk — the generic expansion words ("timings",
+      "hours", "open") are scattered across every document, while the
+      one discriminative word ("pool") sits in a single 120-word
+      chunk and "swimming" occurs nowhere in the knowledge base at
+      all. The note injected the check-in chunk instead (the live
+      reply quoted its welcome-envelope text). Hinglish ("pool ka
+      timing kya hai?") ranked the same chunk 4th — still outside the
+      top-3 cut. The test fixtures never showed this: a lone short
+      spa document has no competitors.
+    - ``search_faq`` has no ranking at all: the Hindi pool query
+      returned ONLY the airport-transfers FAQ, matched via the word
+      "hours" in "book at least 4 hours ahead".
+    - A positive hashed cosine is not evidence of relevance: the
+      greeting "hello" scored 0.1075 against the spa chunk through a
+      hash-bucket collision, sharing no token with it.
+
+    Three deterministic corrections, all scoped to this note (the
+    tool handlers and the mock path are untouched):
+
+    1. Lexical gate — a fuzzy knowledge result must share at least
+       one real token with the expanded query to be injected.
+    2. FAQ topic filter — when the message targets specific
+       facility/topic terms (``targeted_terms``), only FAQs that
+       mention such a term are injected.
+    3. Exact-term guarantee — chunks that literally mention a
+       targeted term are placed first in the note
+       (:func:`_exact_term_chunks`), ahead of the gated fuzzy results,
+       within the same 3-passage budget.
     """
     # Deferred import, mirroring build_registry: the tool modules import
     # the registry, which the runner already depends on.
@@ -210,8 +297,11 @@ def _retrieved_knowledge_note(db: Session, ctx: ToolContext, message: str) -> st
     )
 
     try:
+        # The FAQ fetch uses the handler's max limit so the topic
+        # filter below chooses from every match, not the first 3 in
+        # database order; the note still injects at most 3 FAQ lines.
         faq = search_faq(
-            db, ctx, SearchFaqArgs(hotel_id=ctx.hotel_id, query=message, limit=3)
+            db, ctx, SearchFaqArgs(hotel_id=ctx.hotel_id, query=message, limit=10)
         )
         knowledge = search_hotel_knowledge(
             db, ctx, SearchHotelKnowledgeArgs(query=message, top_k=3)
@@ -220,10 +310,43 @@ def _retrieved_knowledge_note(db: Session, ctx: ToolContext, message: str) -> st
         logger.exception("Knowledge pre-retrieval failed; continuing without it")
         return ""
 
+    terms = targeted_terms(message)
+
+    faq_results = faq.get("results", [])
+    if terms:
+        faq_results = [
+            item
+            for item in faq_results
+            if any(
+                text_matches_term(f"{item['question']} {item['answer']}", term)
+                for term in terms
+            )
+        ]
+    faq_results = faq_results[:3]
+
+    knowledge_results = knowledge.get("results", [])
+
+    # (1) Lexical gate on the fuzzy results.
+    query_tokens = {t for t in text_tokens(expand_query(message)) if len(t) >= 3}
+    knowledge_results = [
+        item
+        for item in knowledge_results
+        if query_tokens & set(text_tokens(item["content"]))
+    ]
+
+    if terms:
+        # (3) Exact-term chunks first, then the gated fuzzy results.
+        exact = _exact_term_chunks(db, ctx, message, terms)
+        exact_contents = {item["content"] for item in exact}
+        knowledge_results = (
+            exact
+            + [item for item in knowledge_results if item["content"] not in exact_contents]
+        )[:3]
+
     lines: list[str] = []
-    for item in faq.get("results", []):
+    for item in faq_results:
         lines.append(f"- FAQ — Q: {item['question']} A: {item['answer']}")
-    for item in knowledge.get("results", []):
+    for item in knowledge_results:
         lines.append(f'- From "{item["title"]}": {item["content"]}')
     if not lines:
         return ""

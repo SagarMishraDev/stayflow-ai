@@ -486,3 +486,128 @@ next_weekend 2026-10-31 → 2026-11-01; `इस सप्ताहांत`/bar
   agent releases and re-runs the live Hindi pool question, the Hindi
   next-weekend opener (prose dates must now read 31 Oct → 1 Nov), and
   the Hindi FAQ turn.
+
+## Round 4 — fuzzy ranking buries the answer in the real demo knowledge set
+
+Post-deploy live re-test #3 (commit 58c8baa): the weekend-date fix held
+(2/2), the empty-completion retry held (no "didn't understand" fallback
+in 4 attempts) — but the Hindi pool question failed again, 0/2. The
+telling detail was in live reply P2, which quoted retrieved material
+about CHECK-IN ("…प्रॉपर्टी का मैप और अन्य विवरण welcome envelope में
+दिए जाते हैं" — the check-in chunk's "a map of the property are handed
+over in the welcome envelope"). Injection was running; it was
+surfacing the WRONG chunks. P1 cited no facility content at all.
+
+### Reproduction (realistic data, not fixtures)
+
+Seeded a scratch SQLite DB through the exact path the live demo used —
+`scripts/seed_demo.py`'s 4 FAQs + `scripts/seed_knowledge.py`'s 5
+documents (airport, check-in instructions, spa & wellness, restaurants,
+cancellation policy) — with `EMBEDDING_PROVIDER=hashed` (the provider
+effectively serving the live demo; chunks: 10), then ran the exact
+handlers `_retrieved_knowledge_note` calls, plus a full chunk ranking.
+
+For "स्विमिंग पूल का समय क्या है?" (expanded by `expand_query` to
+"…swimming pool pool timings hours open"), BEFORE the fix:
+
+- `search_faq` returned **only the airport-transfers FAQ** — it has no
+  ranking and matches on ANY word; the match was the generic expansion
+  word "hours" ("Please book at least 4 hours ahead"). None of the 4
+  real FAQs is about a pool.
+- Knowledge cosine ranking of all 10 chunks: Cancellation 0 **0.1736**,
+  Check-in 1 (welcome envelope) **0.1569**, Cancellation 1 **0.1519**,
+  Restaurants 1 0.1405, Airport 1 0.1091, **Spa 0 (the plunge-pool
+  chunk) 0.0950 — 6th**, Spa 1 0.0945, Airport 0 0.0593, Restaurants 0
+  0.0474, Check-in 0 0.0182. The top-3 cut injected cancellation +
+  check-in + cancellation — exactly what the live replies used.
+- Hinglish "pool ka timing kya hai?": Spa 0 ranked **4th (0.2281)**,
+  just outside the cut; the note injected Restaurants 0, Spa 1 (the
+  yoga/fitness chunk — no pool) and Cancellation 0.
+- English "What are the swimming pool timings?": Spa 0 ranked 1st
+  (0.3512) — English worked, which is why the failure looked
+  Hindi-specific. It is not a language bug; it is a ranking bug that
+  the expanded Hindi/Hinglish queries happen to trigger.
+- Bonus defect: the greeting "hello" scored **0.1075** against Spa 0
+  and WAS injected — a pure hash-bucket collision; "hello" shares no
+  token with that chunk, and the gate was cosine > 0.
+
+Why the ranking fails: `expand_query` appends the generic time words
+"timings hours open" (from समय), and those words are scattered across
+every document (cancellation: "24 hours before…", "72 hours…"; check-in:
+"breakfast timings"; restaurants: "open…", "24 hours"). The one
+discriminative word, "pool", occurs in a single 120-word chunk, and
+"swimming" occurs NOWHERE in the knowledge base (the spa document says
+"plunge pool", never "swimming pool") — so after L2 normalisation over
+long chunks, three off-topic chunks outscore the answer chunk. The
+Round-1/3 unit fixtures never showed this: a lone ~35-word spa
+document plus a pool FAQ have no competitors.
+
+### Root cause
+
+`_retrieved_knowledge_note` injected the handlers' raw top-3 verbatim,
+trusting (a) a hashed-bag-of-words cosine ranking that generic
+expansion terms swamp, (b) an unranked ANY-word FAQ match, and (c) a
+cosine > 0 gate that hash collisions pass. Against the real demo
+knowledge set all three fail at once for Hindi/Hinglish pool queries.
+
+### Fix (scoped to the note path; tool handlers, retriever and the mock path untouched)
+
+New helpers in `backend/app/agent/query_terms.py`:
+
+- `targeted_terms(query)` — the canonical facility/topic terms a
+  message targets: a term-map entry counts when a Hindi/Hinglish
+  variant matches OR the canonical English term (or its head word) is
+  present, so all three languages target the same terms. The generic
+  time entry ("timings hours open") is excluded — it names WHEN, not
+  WHAT, and its words appear in nearly every document.
+- `text_contains_term` / `text_matches_term` — token-based matching
+  ("spa" never matches "space"; hyphen-tolerant, so "wifi" matches
+  "wi-fi" and "check-in" matches "checkin").
+
+In `backend/app/agent/runner.py::_retrieved_knowledge_note`, three
+deterministic corrections:
+
+1. **Lexical gate** — a fuzzy knowledge result is injected only if it
+   shares at least one real `[a-z0-9]+` token (len ≥ 3) with the
+   expanded query. Kills collision-only noise ("hello" → nothing).
+2. **FAQ topic filter** — when targeted terms exist, only FAQs
+   mentioning one are injected (the note now fetches up to the
+   handler's limit of 10 so the filter, not database order, chooses;
+   still at most 3 FAQ lines). The airport FAQ is dropped for pool
+   questions; the check-in FAQ still answers check-in questions.
+3. **Exact-term guarantee** — new `_exact_term_chunks`: chunks that
+   literally mention a targeted term (read via the same hotel-scoped
+   `KnowledgeRepository.list_chunks`, so isolation is unchanged) are
+   placed FIRST in the note, cosine-ordered among themselves, ahead
+   of the gated fuzzy results, inside the same 3-passage budget.
+
+### After the fix (same reproduction)
+
+- Hindi pool query → note: **Spa 0 (plunge pool) first**, then
+  Cancellation 0, Check-in 1; airport FAQ gone.
+- Hinglish pool query → note: **Spa 0 first**, then Restaurants 0,
+  Spa 1; airport FAQ gone.
+- English pool query → note: Spa 0 first (unchanged winner); the two
+  noise FAQs (matched via "what"/"the") are gone.
+- "hello" → note empty.
+
+### Tests
+
+6 new tests in `backend/tests/test_sweep_fixes.py` (file total 29),
+seeded with the ACTUAL demo content imported from the seed scripts —
+competitors included, not a lone spa chunk:
+
+- Hindi / English / Hinglish pool queries each inject the
+  plunge-pool material from the realistic content (and for Hindi:
+  ahead of the welcome-envelope chunk, with the airport FAQ absent).
+- Greeting "hello" injects nothing against the realistic content.
+- The exact-term scan never crosses hotels (hotel B's "Zorblax Spa"
+  plunge-pool chunk never appears in hotel A's note).
+- Helper unit tests for `targeted_terms` / `text_matches_term`.
+
+Full suite: **349 passed / 2 failed (only the pre-existing SQLite-env
+pair `test_hotel_crud_and_validation`,
+`test_ingest_document_creates_chunks_and_embeddings`) / 2 deselected**
+— baseline 343 + 6 new, zero regressions. Ruff clean on `app/` and
+`tests/`. Not done here (per instructions): no commit/push/deploy —
+the parent agent releases and re-runs the live Hindi pool question.
