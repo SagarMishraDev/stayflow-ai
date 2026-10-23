@@ -41,9 +41,15 @@ def create_access_token(
     hotel_user_id: int,
     hotel_id: int,
     role: str,
+    token_version: int = 0,
     expires_minutes: int | None = None,
 ) -> str:
-    """Mint a signed JWT for a hotel staff user."""
+    """Mint a signed JWT for a hotel staff user.
+
+    ``token_version`` is embedded as the ``tv`` claim; ``get_current_user``
+    rejects tokens whose ``tv`` no longer matches the user row, so role
+    changes, password changes and deactivation revoke live sessions.
+    """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(
         minutes=expires_minutes if expires_minutes is not None else settings.jwt_expire_minutes
@@ -53,6 +59,7 @@ def create_access_token(
         "hotel_user_id": hotel_user_id,
         "hotel_id": hotel_id,
         "role": role,
+        "tv": int(token_version or 0),
         "exp": expire,
         "iat": datetime.now(UTC),
     }
@@ -112,6 +119,17 @@ def get_current_user(
     user = db.get(HotelUser, hotel_user_id)
     if user is None or not user.is_active:
         raise _unauthorized("User is inactive or no longer exists")
+    # Token-version check: tokens minted before a role/password change or
+    # deactivation carry a stale ``tv``. A missing claim counts as 0 for
+    # backward compatibility with tokens minted before Phase 3 — which
+    # means users whose token_version has been bumped (>0) reject those
+    # old tokens, while never-bumped users (version 0) still accept them.
+    try:
+        claim_tv = int(payload.get("tv", 0) or 0)
+    except (TypeError, ValueError):
+        raise _unauthorized("Invalid token") from None
+    if claim_tv != int(getattr(user, "token_version", 0) or 0):
+        raise _unauthorized("Token has been revoked")
     if normalize_role(payload.get("role")) != normalize_role(user.role):
         # The signed claims no longer match the account (role changed, or a
         # forged claim). Force a fresh login rather than honouring either.

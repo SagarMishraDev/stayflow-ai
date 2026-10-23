@@ -289,6 +289,7 @@ def create_booking_record(
     booking_status: str = "PENDING",
     actor_type: str = "api",
     actor_id: int | None = None,
+    source: str | None = None,
 ) -> Booking:
     """Create a booking after enforcing every business rule.
 
@@ -332,6 +333,7 @@ def create_booking_record(
         number_of_guests=number_of_guests,
         final_price=price,
         booking_status=booking_status,
+        source=source,
     )
     db.add(booking)
     db.flush()  # assign id for the audit entry
@@ -492,6 +494,7 @@ def confirm_booking_draft(
         booking_status="CONFIRMED",
         actor_type=actor_type,
         actor_id=actor_id,
+        source="agent_chat",
     )
     draft.status = DRAFT_STATUS_CONFIRMED
     db.flush()

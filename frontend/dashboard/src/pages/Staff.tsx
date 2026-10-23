@@ -20,6 +20,7 @@ import {
 import { ListState, PageHeader } from "../components/DataStates";
 import { Field, FormError, Modal, TextInput } from "../components/Form";
 import type { HotelUser } from "../lib/types";
+import { creatableRolesFor, roleLabel } from "../lib/roles";
 
 export default function Staff() {
   const { hotelId, isSuperAdmin, role } = useAuth();
@@ -50,7 +51,7 @@ export default function Staff() {
     <div>
       <PageHeader
         title="Staff & roles"
-        description="Hotel staff accounts. Only hotel admins and super admins can manage them."
+        description="Hotel staff accounts. Admins manage all roles; managers manage operational staff only (backend enforces this)."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setShowCreate(true)}>
             Add staff member
@@ -76,6 +77,7 @@ export default function Staff() {
                   <th>Email</th>
                   <th>Phone</th>
                   <th>Role</th>
+                  <th>Department</th>
                   <th>Active</th>
                   <th>Created</th>
                   <th></th>
@@ -90,6 +92,7 @@ export default function Staff() {
                     <td>
                       <RoleBadge role={u.role} />
                     </td>
+                    <td>{u.department ?? "—"}</td>
                     <td>{u.is_active ? "Yes" : "No"}</td>
                     <td>{formatDateTime(u.created_at)}</td>
                     <td className="whitespace-nowrap">
@@ -116,21 +119,23 @@ export default function Staff() {
         )}
       />
       <p className="mt-3 text-xs text-ink/60">
-        Signed in as {role}. Only a super admin can grant the super_admin role
-        or create users in another hotel; the backend rejects anything else.
+        Signed in as {role}. The super_admin role cannot be created via the
+        dashboard or API; managers only see and manage operational roles.
+        The backend rejects anything else.
       </p>
 
       {showCreate && hotelId && (
         <CreateUserModal
           hotelId={hotelId}
           isSuperAdmin={isSuperAdmin}
+          currentRole={role}
           onClose={() => setShowCreate(false)}
         />
       )}
       {editing && (
         <EditUserModal
           user={editing}
-          isSuperAdmin={isSuperAdmin}
+          currentRole={role}
           hotelId={hotelId}
           onClose={() => setEditing(null)}
         />
@@ -143,27 +148,28 @@ function RoleBadge({ role }: { role: string }) {
   const style =
     role === "super_admin"
       ? "bg-ink text-white"
-      : role === "hotel_admin"
+      : role === "hotel_admin" || role === "manager"
         ? "bg-deep-teal text-white"
         : "bg-mist text-ink/70 border border-line";
   return (
     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${style}`}>
-      {role.replace(/_/g, " ")}
+      {roleLabel(role)}
     </span>
   );
 }
 
-const ROLE_OPTIONS = ["staff", "hotel_admin"] as const;
-
 function CreateUserModal({
   hotelId,
   isSuperAdmin,
+  currentRole,
   onClose,
 }: {
   hotelId: number;
   isSuperAdmin: boolean;
+  currentRole: string | null;
   onClose: () => void;
 }) {
+  const roleOptions = creatableRolesFor(currentRole);
   const hotelsQuery = useHotels();
   const create = useCreate("/hotel-users", [[ "hotel-users", hotelId ]]);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -183,6 +189,7 @@ function CreateUserModal({
         name: values.name,
         email: values.email,
         phone: values.phone || null,
+        department: values.department || null,
         role: values.role,
         password: values.password,
         hotel_id: isSuperAdmin && values.hotel_id ? values.hotel_id : undefined,
@@ -210,13 +217,15 @@ function CreateUserModal({
           </Field>
           <Field label="Role" htmlFor="su-role" error={errors.role?.message}>
             <select id="su-role" className="input" {...register("role")}>
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>{r.replace(/_/g, " ")}</option>
+              {roleOptions.map((r) => (
+                <option key={r} value={r}>{roleLabel(r)}</option>
               ))}
-              {isSuperAdmin && <option value="super_admin">super admin</option>}
             </select>
           </Field>
         </div>
+        <Field label="Department" htmlFor="su-dept" error={errors.department?.message}>
+          <TextInput id="su-dept" name="department" register={register} autoComplete="off" />
+        </Field>
         <Field label="Temporary password" htmlFor="su-pass" error={errors.password?.message}>
           <TextInput id="su-pass" name="password" register={register} type="password" autoComplete="new-password" />
         </Field>
@@ -244,12 +253,12 @@ function CreateUserModal({
 
 function EditUserModal({
   user,
-  isSuperAdmin,
+  currentRole,
   hotelId,
   onClose,
 }: {
   user: HotelUser;
-  isSuperAdmin: boolean;
+  currentRole: string | null;
   hotelId: number | null;
   onClose: () => void;
 }) {
@@ -257,6 +266,11 @@ function EditUserModal({
     qk.hotelUsers(hotelId),
   ]);
   const [serverError, setServerError] = useState<string | null>(null);
+  // Offer roles the current user may assign, plus the user's current
+  // role so the form stays valid for e.g. an existing super_admin.
+  const roleOptions = Array.from(
+    new Set([...creatableRolesFor(currentRole), user.role]),
+  );
   const {
     register,
     handleSubmit,
@@ -266,7 +280,8 @@ function EditUserModal({
     defaultValues: {
       name: user.name,
       phone: user.phone ?? "",
-      role: user.role as "staff" | "hotel_admin" | "super_admin",
+      department: user.department ?? "",
+      role: user.role as HotelUserUpdateForm["role"],
       is_active: user.is_active,
     },
   });
@@ -279,6 +294,7 @@ function EditUserModal({
         data: {
           name: values.name || undefined,
           phone: values.phone || null,
+          department: values.department || null,
           role: values.role,
           is_active: values.is_active,
           password: values.password || undefined,
@@ -302,13 +318,15 @@ function EditUserModal({
           </Field>
           <Field label="Role" htmlFor="eu-role" error={errors.role?.message}>
             <select id="eu-role" className="input" {...register("role")}>
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>{r.replace(/_/g, " ")}</option>
+              {roleOptions.map((r) => (
+                <option key={r} value={r}>{roleLabel(r)}</option>
               ))}
-              {isSuperAdmin && <option value="super_admin">super admin</option>}
             </select>
           </Field>
         </div>
+        <Field label="Department" htmlFor="eu-dept" error={errors.department?.message}>
+          <TextInput id="eu-dept" name="department" register={register} />
+        </Field>
         <Field label="New password (leave blank to keep)" htmlFor="eu-pass" error={errors.password?.message}>
           <TextInput id="eu-pass" name="password" register={register} type="password" autoComplete="new-password" />
         </Field>

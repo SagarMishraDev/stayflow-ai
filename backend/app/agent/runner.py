@@ -31,6 +31,11 @@ from sqlalchemy.orm import Session
 
 from app.agent import conversation as conversation_store
 from app.agent.config import AgentConfig, build_provider
+from app.agent.language import (
+    ResponseLanguage,
+    build_language_instruction,
+    resolve_response_language,
+)
 from app.agent.prompts import build_system_prompt
 from app.agent.providers.base import LLMResponse, ProviderContext, ProviderError
 from app.agent.tools.registry import ToolContext, ToolRegistry, build_registry
@@ -39,6 +44,57 @@ from app.models.hotel import Hotel
 from app.models.room import Room
 
 logger = logging.getLogger(__name__)
+
+# Guest-facing fallback lines, per response language — a provider outage
+# must not flip the conversation back to English-only text.
+_FALLBACKS: dict[str, dict[ResponseLanguage, str]] = {
+    "provider_down": {
+        ResponseLanguage.ENGLISH: (
+            "I'm having trouble reaching my assistant brain right now. "
+            "Please try again in a moment."
+        ),
+        ResponseLanguage.HINDI: (
+            "माफ़ कीजिए, अभी मेरा सिस्टम जवाब नहीं दे पा रहा है। कृपया थोड़ी देर में फिर कोशिश कीजिए।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Sorry, abhi mera system jawab nahi de pa raha hai. "
+            "Please thodi der mein phir try kijiye."
+        ),
+    },
+    "generic_error": {
+        ResponseLanguage.ENGLISH: "Something went wrong on my side. Please try again in a moment.",
+        ResponseLanguage.HINDI: "माफ़ कीजिए, मेरी तरफ़ से कुछ गड़बड़ हो गई। कृपया फिर कोशिश कीजिए।",
+        ResponseLanguage.HINGLISH: (
+            "Sorry, meri taraf se kuch gadbad ho gayi. Please phir try kijiye."
+        ),
+    },
+    "unsure": {
+        ResponseLanguage.ENGLISH: "I'm not sure how to help with that. Could you rephrase?",
+        ResponseLanguage.HINDI: ("माफ़ कीजिए, मैं समझ नहीं पाया। क्या आप इसे दूसरे शब्दों में बता सकते हैं?"),
+        ResponseLanguage.HINGLISH: (
+            "Sorry, main samajh nahi paya. Kya aap isse dusre words mein bata sakte hain?"
+        ),
+    },
+    "too_complex": {
+        ResponseLanguage.ENGLISH: (
+            "I needed a few too many steps for that — could you ask me in a "
+            "simpler way, or tell me exactly what you'd like to do?"
+        ),
+        ResponseLanguage.HINDI: (
+            "इसके लिए मुझे कुछ ज़्यादा steps लगे — क्या आप इसे आसान शब्दों में "
+            "पूछ सकते हैं, या बता दीजिए कि आपको ठीक क्या चाहिए?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Iske liye mujhe kuch zyada steps lage — kya aap isse simpler "
+            "words mein pooch sakte hain, ya bata dijiye aapko exactly kya chahiye?"
+        ),
+    },
+}
+
+
+def _fallback(kind: str, language: ResponseLanguage) -> str:
+    return _FALLBACKS[kind][language]
+
 
 # Hard ceiling on agent loop iterations, independent of per-request config.
 # ``AgentConfig.max_iterations`` may lower the cap for a call but never raise
@@ -62,9 +118,16 @@ class ChatResult:
     iterations: int
     tool_trace: list[ToolTraceEntry] = field(default_factory=list)
     degraded: bool = False
+    detected_language: str | None = None
+    response_language: str | None = None
 
 
-def _provider_context(db: Session, hotel_id: int, guest_id: int | None = None) -> ProviderContext:
+def _provider_context(
+    db: Session,
+    hotel_id: int,
+    guest_id: int | None = None,
+    response_language: str = "english",
+) -> ProviderContext:
     hotel = db.get(Hotel, hotel_id)
     if hotel is None:
         raise ValueError(f"Hotel {hotel_id} not found")
@@ -84,6 +147,7 @@ def _provider_context(db: Session, hotel_id: int, guest_id: int | None = None) -
         room_types=[{"id": r.id, "room_type": r.room_type, "capacity": r.capacity} for r in rooms],
         guest_id=guest_id,
         guest_name=guest_name,
+        response_language=response_language,
     )
 
 
@@ -167,10 +231,29 @@ def run_chat(
         conversation.guest_id = guest_id
         db.commit()
 
+    # Resolve this turn's response language BEFORE the new message joins
+    # the history: explicit request > detection of the latest message >
+    # most recent classifiable guest message > stored preference.
+    prior_guest_texts = [
+        row.message
+        for row in conversation_store.get_history(db, conversation.id, limit=50)
+        if row.sender_type == "guest" and row.message_type == "TEXT"
+    ]
+    response_language, detection = resolve_response_language(
+        text, prior_guest_texts, conversation.preferred_language
+    )
+    if detection.response_language is not None:
+        # The guest wrote in a classifiable language (or asked for one):
+        # it becomes the conversation's preference from this turn on.
+        conversation.preferred_language = detection.response_language.value
+        db.commit()
+
     conversation_store.add_message(db, conversation.id, sender_type="guest", message=text)
     db.commit()
 
-    provider_context = _provider_context(db, hotel_id, guest_id=conversation.guest_id)
+    provider_context = _provider_context(
+        db, hotel_id, guest_id=conversation.guest_id, response_language=response_language.value
+    )
     tool_ctx = ToolContext(
         hotel_id=hotel_id,
         conversation_id=conversation.id,
@@ -179,7 +262,12 @@ def run_chat(
     )
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(provider_context)}
+        {
+            "role": "system",
+            "content": build_system_prompt(provider_context)
+            + "\n\n"
+            + build_language_instruction(response_language),
+        }
     ]
     messages.extend(_history_messages(db, conversation.id, config.history_limit))
     tool_defs = registry.definitions()
@@ -201,21 +289,16 @@ def run_chat(
             except ProviderError:
                 logger.exception("LLM provider failed")
                 degraded = True
-                reply = (
-                    "I'm having trouble reaching my assistant brain right now. "
-                    "Please try again in a moment."
-                )
+                reply = _fallback("provider_down", response_language)
                 break
             except Exception:  # noqa: BLE001 - never crash the chat on provider bugs
                 logger.exception("LLM provider raised unexpectedly")
                 degraded = True
-                reply = "Something went wrong on my side. Please try again in a moment."
+                reply = _fallback("generic_error", response_language)
                 break
 
             if not llm.wants_tools:
-                reply = llm.content.strip() or (
-                    "I'm not sure how to help with that. Could you rephrase?"
-                )
+                reply = llm.content.strip() or _fallback("unsure", response_language)
                 messages.append({"role": "assistant", "content": reply})
                 break
 
@@ -265,10 +348,7 @@ def run_chat(
         else:
             # max_iterations exhausted without a final answer.
             degraded = True
-            reply = (
-                "I needed a few too many steps for that — could you ask me in a "
-                "simpler way, or tell me exactly what you'd like to do?"
-            )
+            reply = _fallback("too_complex", response_language)
     finally:
         if reply:
             conversation_store.add_message(db, conversation.id, sender_type="agent", message=reply)
@@ -280,4 +360,6 @@ def run_chat(
         iterations=iterations,
         tool_trace=trace,
         degraded=degraded,
+        detected_language=detection.detected.value,
+        response_language=response_language.value,
     )

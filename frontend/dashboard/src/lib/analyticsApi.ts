@@ -1,0 +1,176 @@
+import { api } from "./api";
+
+/** Analytics API client (HMS Phase 4). All values come from the backend
+ * aggregations — the dashboard never computes or invents figures. Money
+ * arrives as decimal strings. */
+
+export interface KpiOverview {
+  total_revenue: string;
+  revenue_collected: string;
+  pending_payments: string;
+  refunds: string;
+  total_bookings: number;
+  confirmed_bookings: number;
+  cancelled_bookings: number;
+  average_daily_revenue: string;
+  adr: string;
+  revpar: string;
+  occupancy_rate: number;
+  average_booking_value: string;
+  occupied_room_nights: number;
+  available_room_nights: number;
+  rooms_occupied_tonight: number;
+  rooms_available_tonight: number;
+  period_days: number;
+}
+
+export interface SeriesPoint {
+  period: string;
+  revenue: string;
+  bookings: number;
+}
+
+export interface CompareResult {
+  current: KpiOverview;
+  previous: KpiOverview;
+  series: { current: SeriesPoint[]; previous: SeriesPoint[] };
+  deltas: {
+    revenue_diff: string;
+    revenue_pct: number | null;
+    bookings_diff: number;
+    bookings_pct: number | null;
+    avg_booking_value_diff: string;
+    avg_booking_value_pct: number | null;
+    occupancy_diff_points: number;
+  };
+}
+
+export interface BreakdownRow {
+  key: string;
+  revenue: string;
+  bookings: number;
+}
+
+export interface Breakdowns {
+  by_room_category: BreakdownRow[];
+  by_room: BreakdownRow[];
+  by_booking_source: BreakdownRow[];
+  by_payment_method: BreakdownRow[];
+  by_booking_status: BreakdownRow[];
+  by_department: BreakdownRow[];
+}
+
+export interface PopularityRow {
+  room_id: number;
+  room_type: string;
+  is_active: boolean;
+  total_rooms: number;
+  bookings: number;
+  revenue: string;
+  occupied_room_nights: number;
+  available_room_nights: number;
+  occupancy_rate: number;
+}
+
+export interface Popularity {
+  rooms: PopularityRow[];
+  most_booked: PopularityRow[];
+  least_booked: PopularityRow[];
+}
+
+export const RANGE_OPTIONS: { key: string; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "week", label: "This week" },
+  { key: "last_week", label: "Last week" },
+  { key: "month", label: "This month" },
+  { key: "last_month", label: "Last month" },
+  { key: "quarter", label: "This quarter" },
+  { key: "last_quarter", label: "Last quarter" },
+  { key: "year", label: "This year" },
+  { key: "last_year", label: "Last year" },
+  { key: "all", label: "All time" },
+  { key: "custom", label: "Custom range" },
+];
+
+export interface RangeParams {
+  range: string;
+  start?: string;
+  end?: string;
+}
+
+function params(hotelId: number, r: RangeParams): Record<string, string | number> {
+  const p: Record<string, string | number> = { hotel_id: hotelId, range: r.range };
+  if (r.range === "custom") {
+    if (r.start) p.start = r.start;
+    if (r.end) p.end = r.end;
+  }
+  return p;
+}
+
+export async function fetchOverview(hotelId: number, r: RangeParams): Promise<KpiOverview> {
+  const { data } = await api.get("/analytics/overview", { params: params(hotelId, r) });
+  return data as KpiOverview;
+}
+
+export async function fetchSeries(
+  hotelId: number,
+  r: RangeParams,
+  groupBy: string,
+): Promise<SeriesPoint[]> {
+  const { data } = await api.get("/analytics/series", {
+    params: { ...params(hotelId, r), group_by: groupBy },
+  });
+  return (data as { series: SeriesPoint[] }).series;
+}
+
+export async function fetchCompare(
+  hotelId: number,
+  a: RangeParams,
+  b: RangeParams,
+): Promise<CompareResult> {
+  const p: Record<string, string | number> = {
+    hotel_id: hotelId,
+    range_a: a.range,
+    range_b: b.range,
+  };
+  if (a.range === "custom") {
+    if (a.start) p.a_start = a.start;
+    if (a.end) p.a_end = a.end;
+  }
+  if (b.range === "custom") {
+    if (b.start) p.b_start = b.start;
+    if (b.end) p.b_end = b.end;
+  }
+  const { data } = await api.get("/analytics/compare", { params: p });
+  return data as CompareResult;
+}
+
+export async function fetchBreakdowns(hotelId: number, r: RangeParams): Promise<Breakdowns> {
+  const { data } = await api.get("/analytics/breakdowns", { params: params(hotelId, r) });
+  return data as Breakdowns;
+}
+
+export async function fetchPopularity(hotelId: number, r: RangeParams): Promise<Popularity> {
+  const { data } = await api.get("/analytics/room-popularity", {
+    params: params(hotelId, r),
+  });
+  return data as Popularity;
+}
+
+export async function downloadCsv(
+  hotelId: number,
+  r: RangeParams,
+  dataset: "series" | "room-popularity",
+): Promise<void> {
+  const { data } = await api.get("/analytics/export", {
+    params: { ...params(hotelId, r), dataset, group_by: "day" },
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${dataset}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

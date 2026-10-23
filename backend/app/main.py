@@ -6,8 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
+from app.api.analytics import router as analytics_router
 from app.api.integrations import router as integrations_router
 from app.api.knowledge import router as knowledge_router
+from app.api.ops import router as ops_router
 from app.api.public import router as public_router
 from app.api.router import router
 from app.api.webhooks import router as webhooks_router
@@ -189,6 +191,17 @@ app.include_router(
 )
 app.include_router(
     integrations_router,
+    prefix=settings.api_prefix,
+)
+
+# HMS upgrade: analytics + payments (Phase 4) and operational workflows
+# (Phase 5). Staff-JWT protected and hotel-scoped like the main staff API.
+app.include_router(
+    analytics_router,
+    prefix=settings.api_prefix,
+)
+app.include_router(
+    ops_router,
     prefix=settings.api_prefix,
 )
 

@@ -38,6 +38,7 @@ class BookingResponse(BaseModel):
     number_of_guests: int
     final_price: Decimal
     booking_status: str
+    source: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

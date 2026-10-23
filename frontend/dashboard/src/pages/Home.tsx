@@ -16,8 +16,56 @@ import StatusBadge from "../components/StatusBadge";
  * Dashboard home. The bold visual moment is today's arrivals and
  * departures; everything else is a quiet, real-data metric.
  */
+const QUICK_ACTIONS: Record<string, { to: string; label: string; hint: string }[]> = {
+  super_admin: [
+    { to: "/staff", label: "Staff & roles", hint: "Manage accounts and roles" },
+    { to: "/audit-log", label: "Audit log", hint: "Review activity across hotels" },
+    { to: "/settings", label: "Hotel settings", hint: "Profile, integrations and policies" },
+    { to: "/bookings", label: "Bookings", hint: "All reservations" },
+  ],
+  hotel_admin: [
+    { to: "/staff", label: "Staff & roles", hint: "Manage accounts and roles" },
+    { to: "/audit-log", label: "Audit log", hint: "Review staff activity" },
+    { to: "/settings", label: "Hotel settings", hint: "Profile and integrations" },
+    { to: "/bookings", label: "Bookings", hint: "Reservations and revenue" },
+  ],
+  manager: [
+    { to: "/bookings", label: "Bookings", hint: "Today's reservations" },
+    { to: "/orders", label: "Food orders", hint: "Order operations" },
+    { to: "/service-requests", label: "Service requests", hint: "Guest requests board" },
+    { to: "/staff", label: "Staff & roles", hint: "Operational staff" },
+  ],
+  staff: [
+    { to: "/bookings", label: "Bookings", hint: "Reservations and check-ins" },
+    { to: "/guests", label: "Guests", hint: "Guest directory" },
+    { to: "/service-requests", label: "Service requests", hint: "Guest requests board" },
+  ],
+  receptionist: [
+    { to: "/bookings", label: "Bookings", hint: "Check-in / check-out" },
+    { to: "/guests", label: "Guests", hint: "Guest directory" },
+    { to: "/conversations", label: "Guest chats", hint: "Guest messages" },
+  ],
+  kitchen: [
+    { to: "/orders", label: "Food orders", hint: "Kitchen queue" },
+    { to: "/menu", label: "Menu", hint: "Menu items and availability" },
+  ],
+  housekeeping: [
+    { to: "/service-requests", label: "Service requests", hint: "Cleaning and guest requests" },
+    { to: "/rooms", label: "Rooms & rates", hint: "Room status and types" },
+  ],
+  accountant: [
+    { to: "/bookings", label: "Bookings", hint: "Read-only finance view of stays" },
+    { to: "/audit-log", label: "Audit log", hint: "Finance-relevant activity" },
+    { to: "/notifications", label: "Notifications", hint: "Payment and system alerts" },
+  ],
+  maintenance: [
+    { to: "/service-requests", label: "Service requests", hint: "Maintenance work queue" },
+    { to: "/rooms", label: "Rooms & rates", hint: "Room status" },
+  ],
+};
+
 export default function Home() {
-  const { hotelId } = useAuth();
+  const { hotelId, role } = useAuth();
   const today = todayISO();
   const hotelQuery = useHotel(hotelId);
   const bookingsQuery = useBookings(hotelId);
@@ -144,6 +192,23 @@ export default function Home() {
           </Link>
         </div>
       </section>
+
+      {/* Role-specific quick actions (existing routes only). */}
+      {role && QUICK_ACTIONS[role] && (
+        <section aria-label="Quick actions for your role" className="mb-6">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/60">
+            Quick actions — {role.replace(/_/g, " ")}
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {QUICK_ACTIONS[role].map((a) => (
+              <Link key={a.to + a.label} to={a.to} className="panel block p-5 hover:shadow-card">
+                <p className="font-semibold text-deep-teal underline">{a.label}</p>
+                <p className="mt-1 text-sm text-ink/60">{a.hint}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section aria-label="Today's movement" className="panel overflow-hidden">
         <h2 className="panel-title border-b border-line px-5 py-4">

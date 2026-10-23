@@ -29,3 +29,12 @@ class HotelRoom(Base):
         nullable=False,
         default=True,
     )
+
+    # Housekeeping lifecycle: DIRTY -> CLEANING -> CLEAN -> INSPECTED ->
+    # READY. Only READY rooms are bookable-ready; finishing cleaning
+    # (CLEAN) never makes a room bookable by itself.
+    cleaning_status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="READY",
+    )

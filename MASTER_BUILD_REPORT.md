@@ -826,3 +826,24 @@ Ruff check + format clean. Frontend `npm run build` and
 `npm run build:demo` (incl. `tsc --noEmit`) both pass. Not
 pushed/deployed — the parent releases; live re-verification is a browser
 save on Hotel Settings after deploy.
+
+---
+
+## Addendum 2026-10-23 — Advanced HMS upgrade (Phases 1–6)
+
+Full detail in `HMS_UPGRADE_REPORT.md`. Summary: (1) audit + accounting
+definitions; (2) deterministic Hindi/Hinglish/English detection threaded
+through the agent for mock AND real providers, per-conversation language
+persistence, and a deterministic food-order slot flow that clarifies
+instead of fabricating confirmations (screenshot sentence is a regression
+test); (3) 9-role RBAC with `app/core/permissions.py` as the single
+source of truth, manager creation limits, and JWT `token_version`
+session revocation; (4) real-DB analytics APIs + a dashboard Analytics
+page with KPI cards, revenue series, period comparison, breakdowns and a
+circle-packing room-popularity bubble chart; (5) kitchen/housekeeping/
+front-desk ops workflows with role-targeted notifications. One migration
+(`d5e6f7a8b9c0`). Validation: full suite **282 passed / 2 failed /
+2 deselected** (baseline 235/2/2 — same two pre-existing SQLite-env
+failures, zero regressions; +47 new tests), ruff clean, dashboard
+`npm run build` + `build:demo` pass. Not committed/pushed/deployed —
+the parent releases.

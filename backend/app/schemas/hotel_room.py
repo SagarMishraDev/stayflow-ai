@@ -7,6 +7,7 @@ class HotelRoomResponse(BaseModel):
     room_id: int
     room_number: str
     is_active: bool
+    cleaning_status: str = "READY"
 
     model_config = ConfigDict(from_attributes=True)
 

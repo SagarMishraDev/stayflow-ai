@@ -6,6 +6,7 @@ import { queryClient } from "./lib/queries";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
+import Analytics from "./pages/Analytics";
 import Bookings from "./pages/Bookings";
 import BookingDetail from "./pages/BookingDetail";
 import RoomsRates from "./pages/RoomsRates";
@@ -70,6 +71,16 @@ export default function App() {
               }
             >
               <Route index element={<Home />} />
+              <Route
+                path="analytics"
+                element={
+                  <RequireRole
+                    roles={["super_admin", "hotel_admin", "manager", "accountant"]}
+                  >
+                    <Analytics />
+                  </RequireRole>
+                }
+              />
               <Route path="bookings" element={<Bookings />} />
               <Route path="bookings/:id" element={<BookingDetail />} />
               <Route path="rooms" element={<RoomsRates />} />
@@ -89,7 +100,7 @@ export default function App() {
               <Route
                 path="staff"
                 element={
-                  <RequireRole roles={["hotel_admin", "super_admin"]}>
+                  <RequireRole roles={["hotel_admin", "super_admin", "manager"]}>
                     <Staff />
                   </RequireRole>
                 }
@@ -97,7 +108,9 @@ export default function App() {
               <Route
                 path="audit-log"
                 element={
-                  <RequireRole roles={["super_admin"]}>
+                  <RequireRole
+                    roles={["super_admin", "hotel_admin", "manager", "accountant"]}
+                  >
                     <AuditLog />
                   </RequireRole>
                 }

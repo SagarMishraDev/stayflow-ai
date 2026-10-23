@@ -144,11 +144,24 @@ export const hotelSchema = z.object({
 });
 export type HotelForm = z.input<typeof hotelSchema>;
 
+export const STAFF_ROLES = [
+  "super_admin",
+  "hotel_admin",
+  "manager",
+  "staff",
+  "receptionist",
+  "kitchen",
+  "housekeeping",
+  "accountant",
+  "maintenance",
+] as const;
+
 export const hotelUserCreateSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Enter a valid email address"),
   phone: z.string().max(50).optional().or(z.literal("")),
-  role: z.enum(["super_admin", "hotel_admin", "staff"], {
+  department: z.string().max(100).optional().or(z.literal("")),
+  role: z.enum(STAFF_ROLES, {
     errorMap: () => ({ message: "Choose a role" }),
   }),
   password: z.string().min(8, "Password must be at least 8 characters"),
@@ -159,7 +172,8 @@ export type HotelUserCreateForm = z.input<typeof hotelUserCreateSchema>;
 export const hotelUserUpdateSchema = z.object({
   name: z.string().min(1).optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),
-  role: z.enum(["super_admin", "hotel_admin", "staff"]).optional(),
+  department: z.string().max(100).optional().or(z.literal("")),
+  role: z.enum(STAFF_ROLES).optional(),
   is_active: z.boolean().optional(),
   password: z
     .string()

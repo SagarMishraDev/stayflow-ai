@@ -2,7 +2,16 @@
  * Field names and optionality are copied from the pydantic models; do not
  * add fields the API does not return. */
 
-export type Role = "super_admin" | "hotel_admin" | "staff";
+export type Role =
+  | "super_admin"
+  | "hotel_admin"
+  | "manager"
+  | "staff"
+  | "receptionist"
+  | "kitchen"
+  | "housekeeping"
+  | "accountant"
+  | "maintenance";
 
 export interface Hotel {
   id: number;
@@ -27,6 +36,7 @@ export interface HotelUser {
   email: string;
   phone: string | null;
   role: string;
+  department: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -333,6 +343,7 @@ export interface TokenPayload {
   hotel_user_id: number;
   hotel_id: number;
   role: string;
+  tv?: number;
   exp: number;
   iat: number;
 }

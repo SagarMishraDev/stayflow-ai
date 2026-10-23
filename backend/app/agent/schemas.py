@@ -24,6 +24,10 @@ class ChatResponse(BaseModel):
     conversation_id: int
     iterations: int
     degraded: bool = False
+    # Internal language metadata for staff tooling/tests — the labels are
+    # never part of the guest-visible reply text.
+    detected_language: str | None = None
+    response_language: str | None = None
     tool_trace: list[ToolTraceResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

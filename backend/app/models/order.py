@@ -46,6 +46,19 @@ class Order(Base):
         default="PENDING",
     )
 
+    # Why the order was rejected/cancelled by staff (required on reject).
+    status_reason: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    # When the guest wants the order (pre-orders for check-in day etc.).
+    # An order without a time is served as soon as possible.
+    scheduled_for: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(10, 2),
         nullable=False,

@@ -20,6 +20,7 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
+from app.agent.language import ResponseLanguage
 from app.agent.providers.base import (
     LLMResponse,
     ProviderContext,
@@ -51,13 +52,20 @@ _MONTH_NUMBERS = {
     "nov": 11,
     "dec": 12,
 }
-_GUESTS_RE = re.compile(r"(\d+)\s*(guest|person|people|adult|pax)", re.IGNORECASE)
-_BOOKING_ID_RE = re.compile(r"booking\s*(?:id|#|number)?\s*[:#]?\s*(\d+)", re.IGNORECASE)
-_CONFIRM_RE = re.compile(r"\b(yes|confirm|confirmed|proceed|go ahead|book it)\b", re.IGNORECASE)
+_GUESTS_RE = re.compile(r"(\d+)\s*(guest|person|people|adult|pax|मेहमान|लोग)", re.IGNORECASE)
+_BOOKING_ID_RE = re.compile(
+    r"(?:booking|बुकिंग)\s*(?:id|#|number|नंबर)?\s*[:#]?\s*(\d+)", re.IGNORECASE
+)
+_CONFIRM_RE = re.compile(
+    r"\b(yes|confirm|confirmed|proceed|go ahead|book it|haan|bilkul|pakka|"
+    r"confirm kar do)\b|हाँ|कन्फर्म|ठीक है",
+    re.IGNORECASE,
+)
 _GUEST_EMAIL_RE = re.compile(r"[\w.\-]+@[\w.\-]+\.\w+")
 _GUEST_PHONE_RE = re.compile(r"(\+?\d[\d\s\-]{6,}\d)")
 _GUEST_NAME_RE = re.compile(
-    r"(?:my name is|this is|i am|i'm)\s+([a-zA-Z][a-zA-Z\s.\-']{1,40}?)(?:\s*,|\s+and\s+|\s*$)",
+    r"(?:my name is|mera naam|this is|i am|i'm)\s+"
+    r"([a-zA-Z][a-zA-Z\s.\-']{1,40}?)(?:\s*,|\s+and\s+|\s*$)",
     re.IGNORECASE,
 )
 # Guest questions that belong to the hotel's unstructured knowledge base
@@ -102,27 +110,222 @@ _KNOWLEDGE_KEYWORDS = (
 )
 
 
-def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
+def _lang(context: ProviderContext) -> ResponseLanguage:
+    try:
+        return ResponseLanguage(context.response_language or "english")
+    except ValueError:
+        return ResponseLanguage.ENGLISH
+
+
+# Guest-facing template strings per response language. Core flows only —
+# data-driven answers (FAQ text, knowledge chunks, policy text) come from
+# the hotel's own content and are returned verbatim in every language.
+_STRINGS: dict[str, dict[ResponseLanguage, str]] = {
+    "help": {
+        ResponseLanguage.ENGLISH: (
+            "I can help with room availability, prices, policies, bookings, "
+            "food orders, and service requests. What would you like to do?"
+        ),
+        ResponseLanguage.HINDI: (
+            "मैं आपकी मदद कर सकता हूँ — कमरे की उपलब्धता, कीमतें, नीतियाँ, "
+            "बुकिंग, खाने के ऑर्डर और सेवा अनुरोधों में। आप क्या करना चाहेंगे?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Main aapki help kar sakta hoon — room availability, prices, "
+            "policies, bookings, food orders aur service requests mein. "
+            "Aap kya karna chahenge?"
+        ),
+    },
+    "avail_ask_dates": {
+        ResponseLanguage.ENGLISH: (
+            "I can check availability{room_hint}. Which dates? "
+            "Please share check-in and check-out dates (YYYY-MM-DD)."
+        ),
+        ResponseLanguage.HINDI: (
+            "मैं उपलब्धता देख सकता हूँ{room_hint}। कौन-सी तारीख़ें चाहिए? "
+            "कृपया चेक-इन और चेक-आउट की तारीख़ें बताइए (YYYY-MM-DD)।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Main availability check kar sakta hoon{room_hint}. Kaun-si "
+            "dates chahiye? Please check-in aur check-out dates bata "
+            "dijiye (YYYY-MM-DD)."
+        ),
+    },
+    "price_ask": {
+        ResponseLanguage.ENGLISH: (
+            "I can share exact pricing. Which room type and dates "
+            "(check-in / check-out, YYYY-MM-DD) should I quote?"
+        ),
+        ResponseLanguage.HINDI: (
+            "मैं सही कीमत बता सकता हूँ। कौन-सा कमरा और कौन-सी तारीख़ें (चेक-इन / चेक-आउट, YYYY-MM-DD) देखूँ?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Main exact price bata sakta hoon. Kaun-sa room type aur kaun-si "
+            "dates (check-in / check-out, YYYY-MM-DD) quote karoon?"
+        ),
+    },
+    "cancel_ask_id": {
+        ResponseLanguage.ENGLISH: "I can cancel your booking. Please share your booking ID.",
+        ResponseLanguage.HINDI: "मैं आपकी बुकिंग रद्द कर सकता हूँ। कृपया अपना बुकिंग ID बताइए।",
+        ResponseLanguage.HINGLISH: (
+            "Main aapki booking cancel kar sakta hoon. Please apna booking ID bata dijiye."
+        ),
+    },
+    "booking_missing": {
+        ResponseLanguage.ENGLISH: "Happy to help with the booking! I still need: {missing}.",
+        ResponseLanguage.HINDI: "बुकिंग में खुशी से मदद करूँगा! मुझे अभी चाहिए: {missing}।",
+        ResponseLanguage.HINGLISH: (
+            "Booking mein khushi se help karunga! Mujhe abhi chahiye: {missing}."
+        ),
+    },
+    "booking_ask_contact": {
+        ResponseLanguage.ENGLISH: (
+            "I'd be happy to book that for you. Could you share your "
+            "name and an email or phone number so I can hold the room?"
+        ),
+        ResponseLanguage.HINDI: (
+            "मैं खुशी से यह बुकिंग कर दूँगा। कृपया अपना नाम और ईमेल या "
+            "फ़ोन नंबर बताइए, ताकि मैं कमरा आपके लिए रख सकूँ।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Main khushi se ye booking kar dunga. Please apna naam aur "
+            "email ya phone number bata dijiye, taaki main room aapke "
+            "liye hold kar sakoon."
+        ),
+    },
+    "draft_failed": {
+        ResponseLanguage.ENGLISH: (
+            "I wasn't able to prepare that booking draft. Could you "
+            "tell me the room type and dates again so I can retry?"
+        ),
+        ResponseLanguage.HINDI: (
+            "माफ़ कीजिए, मैं यह बुकिंग ड्राफ़्ट तैयार नहीं कर पाया। क्या आप "
+            "कमरे का प्रकार और तारीख़ें फिर से बता सकते हैं?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Sorry, main ye booking draft prepare nahi kar paya. Kya aap "
+            "room type aur dates phir se bata sakte hain, taaki main retry karoon?"
+        ),
+    },
+    "order_ask_contact": {
+        ResponseLanguage.ENGLISH: (
+            "Almost done — I just need your name and a phone number or "
+            "email to place the order against your stay."
+        ),
+        ResponseLanguage.HINDI: (
+            "बस एक चीज़ और — ऑर्डर के लिए कृपया अपना नाम और फ़ोन नंबर या ईमेल बता दीजिए।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Bas ek cheez aur — order ke liye please apna naam aur phone "
+            "number ya email bata dijiye."
+        ),
+    },
+    "order_ask_item": {
+        ResponseLanguage.ENGLISH: (
+            "Sure! What would you like to order? Our menu has: {items}. "
+            "Tell me the item, quantity, and when you want it."
+        ),
+        ResponseLanguage.HINDI: (
+            "बिल्कुल! आप क्या ऑर्डर करना चाहेंगे? हमारे मेनू में है: {items}। आइटम, मात्रा और समय बता दीजिए।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Bilkul! Aap kya order karna chahenge? Hamare menu mein hai: "
+            "{items}. Item, quantity aur time bata dijiye."
+        ),
+    },
+    "order_ask_qty": {
+        ResponseLanguage.ENGLISH: "How many {item} would you like, and when should we serve it?",
+        ResponseLanguage.HINDI: "आपको कितने {item} चाहिए, और यह कब चाहिए?",
+        ResponseLanguage.HINGLISH: "Aapko kitne {item} chahiye, aur ye kab chahiye?",
+    },
+    "order_ask_when": {
+        ResponseLanguage.ENGLISH: (
+            "Noted: {item} × {qty}. When would you like it — a date/time, "
+            "or after check-in? (Room number is fine to share later, "
+            "after check-in.)"
+        ),
+        ResponseLanguage.HINDI: (
+            "ठीक है: {item} × {qty}। यह आपको कब चाहिए — कोई तारीख़/समय, "
+            "या चेक-इन के बाद? (कमरा नंबर चेक-इन के बाद देना ठीक है।)"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Noted: {item} × {qty}. Ye aapko kab chahiye — koi date/time, "
+            "ya check-in ke baad? (Room number check-in ke baad dena "
+            "bilkul theek hai.)"
+        ),
+    },
+}
+
+
+def _t(lang: ResponseLanguage, key: str, **fmt: Any) -> str:
+    template = _STRINGS[key][lang]
+    return template.format(**fmt) if fmt else template
+
+
+def _summarize(
+    tool_name: str, data: dict[str, Any], lang: ResponseLanguage = ResponseLanguage.ENGLISH
+) -> str | None:
     """Render a tool result as a short guest-facing message."""
     if tool_name == "check_room_availability":
         nights = data.get("nights", [])
         if data.get("fully_available"):
+            if lang is ResponseLanguage.HINDI:
+                return (
+                    f"अच्छी खबर! {data.get('room_type')} कमरा आपकी तारीख़ों के लिए "
+                    f"उपलब्ध है ({data.get('check_in')} से {data.get('check_out')})। "
+                    "क्या मैं कीमत बताऊँ या बुकिंग शुरू करूँ?"
+                )
+            if lang is ResponseLanguage.HINGLISH:
+                return (
+                    f"Good news! {data.get('room_type')} room aapki dates ke liye "
+                    f"available hai ({data.get('check_in')} se {data.get('check_out')}). "
+                    "Kya main price bataun ya booking start karoon?"
+                )
             return (
                 f"Good news! The {data.get('room_type')} room is available for your "
                 f"dates ({data.get('check_in')} to {data.get('check_out')}). "
                 "Would you like me to share the price or start a booking?"
             )
         bad = [n["date"] for n in nights if not n.get("available")]
+        if lang is ResponseLanguage.HINDI:
+            return (
+                f"माफ़ कीजिए, {data.get('room_type')} कमरा इन तारीख़ों पर उपलब्ध "
+                f"नहीं है: {', '.join(bad)}। क्या आप दूसरी तारीख़ें देखना चाहेंगे?"
+            )
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                f"Sorry, {data.get('room_type')} room in dates par available "
+                f"nahi hai: {', '.join(bad)}. Kya aap dusri dates try karna chahenge?"
+            )
         return (
             f"Unfortunately the {data.get('room_type')} room is not available on "
             f"{', '.join(bad)}. Would you like to try different dates?"
         )
     if tool_name == "get_room_rate":
         if data.get("fully_priced"):
+            if lang is ResponseLanguage.HINDI:
+                return (
+                    f"{data.get('room_type')} कमरे की कुल कीमत {data.get('total')} "
+                    f"{data.get('currency')} है, {data.get('check_in')} से "
+                    f"{data.get('check_out')} के लिए।"
+                )
+            if lang is ResponseLanguage.HINGLISH:
+                return (
+                    f"{data.get('room_type')} room ki total price {data.get('total')} "
+                    f"{data.get('currency')} hai, {data.get('check_in')} se "
+                    f"{data.get('check_out')} ke liye."
+                )
             return (
                 f"The {data.get('room_type')} room costs {data.get('total')} "
                 f"{data.get('currency')} in total for {data.get('check_in')} to "
                 f"{data.get('check_out')}."
+            )
+        if lang is ResponseLanguage.HINDI:
+            return "इन तारीख़ों की पूरी कीमत अभी मेरे पास नहीं है। मैं होटल से पता करके बताता हूँ।"
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                "In dates ki complete pricing abhi mere paas nahi hai. "
+                "Main hotel se check karke batata hoon."
             )
         return "I don't have complete pricing for those dates yet. Let me check with the hotel."
     if tool_name == "get_hotel_policy":
@@ -134,6 +337,13 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
     if tool_name == "search_faq":
         results = data.get("results", [])
         if not results:
+            if lang is ResponseLanguage.HINDI:
+                return "माफ़ कीजिए, इसका जवाब अभी मेरे पास नहीं है। क्या मैं आपको फ्रंट डेस्क से जोड़ दूँ?"
+            if lang is ResponseLanguage.HINGLISH:
+                return (
+                    "Sorry, iska jawab abhi mere paas nahi hai. Kya main aapko "
+                    "front desk se connect kar doon?"
+                )
             return (
                 "I don't have an answer for that yet. Would you like me to connect "
                 "you with the front desk?"
@@ -143,6 +353,13 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
     if tool_name == "search_hotel_knowledge":
         results = data.get("results", [])
         if not results:
+            if lang is ResponseLanguage.HINDI:
+                return "इसकी विस्तृत जानकारी अभी हमारी होटल गाइड में नहीं है। क्या मैं फ्रंट डेस्क से पता करूँ?"
+            if lang is ResponseLanguage.HINGLISH:
+                return (
+                    "Iski detailed information abhi hamari hotel guide mein "
+                    "nahi hai. Kya main front desk se check karoon?"
+                )
             return (
                 "I don't have detailed information on that in our hotel guide "
                 "yet. Shall I check with the front desk?"
@@ -169,11 +386,37 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
     if tool_name == "get_menu":
         items = data.get("items", [])
         if not items:
+            if lang is ResponseLanguage.HINDI:
+                return "अभी मेनू खाली है।"
+            if lang is ResponseLanguage.HINGLISH:
+                return "Abhi menu khali hai."
             return "The menu is empty right now."
         lines = ", ".join(f"{i['name']} ({i['price']})" for i in items[:10])
+        if lang is ResponseLanguage.HINDI:
+            return f"हमारा मेनू: {lines}। ऑर्डर करना हो तो आइटम, मात्रा और समय बता दीजिए।"
+        if lang is ResponseLanguage.HINGLISH:
+            return f"Hamara menu: {lines}. Order karna ho to item, quantity aur time bata dijiye."
         return f"Here's our menu: {lines}."
     if tool_name == "preview_booking":
         d = data.get("details", {})
+        if lang is ResponseLanguage.HINDI:
+            return (
+                "आपकी बुकिंग का सारांश:\n"
+                f"- कमरा: {d.get('room_type')}\n"
+                f"- चेक-इन: {d.get('check_in')}, चेक-आउट: {d.get('check_out')}\n"
+                f"- मेहमान: {d.get('number_of_guests')}\n"
+                f"- कुल कीमत: {d.get('total_price')} {d.get('currency', '')}\n"
+                "क्या मैं यह बुकिंग कन्फर्म कर दूँ?"
+            )
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                "Aapki booking ka summary:\n"
+                f"- Room: {d.get('room_type')}\n"
+                f"- Check-in: {d.get('check_in')}, Check-out: {d.get('check_out')}\n"
+                f"- Guests: {d.get('number_of_guests')}\n"
+                f"- Total price: {d.get('total_price')} {d.get('currency', '')}\n"
+                "Kya main ye booking confirm kar doon?"
+            )
         return (
             "Here's your booking summary:\n"
             f"- Room: {d.get('room_type')}\n"
@@ -183,12 +426,34 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
             "Would you like me to confirm this booking?"
         )
     if tool_name == "create_booking":
+        if lang is ResponseLanguage.HINDI:
+            return (
+                f"आपकी बुकिंग कन्फर्म हो गई है! बुकिंग ID {data.get('booking_id')}, "
+                f"{data.get('room_type')}, {data.get('check_in')} से {data.get('check_out')}, "
+                f"कुल {data.get('final_price')}।"
+            )
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                f"Aapki booking confirm ho gayi hai! Booking ID {data.get('booking_id')}, "
+                f"{data.get('room_type')}, {data.get('check_in')} se {data.get('check_out')}, "
+                f"total {data.get('final_price')}."
+            )
         return (
             f"Your booking is confirmed! Booking ID {data.get('booking_id')}, "
             f"{data.get('room_type')}, {data.get('check_in')} to {data.get('check_out')}, "
             f"total {data.get('final_price')}."
         )
     if tool_name == "cancel_booking":
+        if lang is ResponseLanguage.HINDI:
+            return (
+                f"बुकिंग {data.get('booking_id')} रद्द कर दी गई है "
+                f"(स्थिति: {data.get('booking_status')})।"
+            )
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                f"Booking {data.get('booking_id')} cancel kar di gayi hai "
+                f"(status: {data.get('booking_status')})."
+            )
         return (
             f"Booking {data.get('booking_id')} has been cancelled "
             f"(status: {data.get('booking_status')})."
@@ -200,6 +465,20 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str | None:
             f"status {data.get('booking_status')}, total {data.get('final_price')}."
         )
     if tool_name == "create_food_order":
+        items = data.get("items", [])
+        item_lines = ", ".join(f"{i.get('name')} × {i.get('quantity')}" for i in items)
+        if lang is ResponseLanguage.HINDI:
+            return (
+                f"आपका खाने का ऑर्डर कन्फर्म हो गया है! ऑर्डर ID {data.get('order_id')}"
+                + (f", आइटम: {item_lines}" if item_lines else "")
+                + f", कुल {data.get('total_amount')}।"
+            )
+        if lang is ResponseLanguage.HINGLISH:
+            return (
+                f"Aapka food order confirm ho gaya hai! Order ID {data.get('order_id')}"
+                + (f", items: {item_lines}" if item_lines else "")
+                + f", total {data.get('total_amount')}."
+            )
         return (
             f"Your food order is confirmed! Order ID {data.get('order_id')}, "
             f"total {data.get('total_amount')}."
@@ -384,9 +663,10 @@ class MockProvider:
     def _route_keywords(
         self, messages: list[dict[str, Any]], context: ProviderContext
     ) -> LLMResponse:
+        lang = _lang(context)
         # If we already called tools for the latest user message, summarize
         # the newest tool result instead of calling again (prevents loops).
-        summary = self._summarize_latest_tool_result(messages)
+        summary = self._summarize_latest_tool_result(messages, lang)
         if summary is not None:
             return LLMResponse(content=summary)
 
@@ -418,12 +698,7 @@ class MockProvider:
                             )
                         ]
                     )
-                return LLMResponse(
-                    content=(
-                        "I wasn't able to prepare that booking draft. Could you "
-                        "tell me the room type and dates again so I can retry?"
-                    )
-                )
+                return LLMResponse(content=_t(lang, "draft_failed"))
 
         # 1b. Continue a booking after the guest lookup finished.
         guest_result = self._last_tool_result(messages, "find_or_create_guest")
@@ -452,8 +727,10 @@ class MockProvider:
                     ]
                 )
 
-        # 2. Booking cancellation: "cancel booking 123".
-        if "cancel" in lowered and "book" in lowered:
+        # 2. Booking cancellation: "cancel booking 123" / "बुकिंग 123 रद्द".
+        if ("cancel" in lowered and "book" in lowered) or (
+            "रद्द" in user_text and ("बुकिंग" in user_text or "booking" in lowered)
+        ):
             match = _BOOKING_ID_RE.search(user_text)
             if match:
                 return LLMResponse(
@@ -467,7 +744,15 @@ class MockProvider:
                         )
                     ]
                 )
-            return LLMResponse(content="I can cancel your booking. Please share your booking ID.")
+            return LLMResponse(content=_t(lang, "cancel_ask_id"))
+
+        # 2a. Food orders (before booking/policy routes): a food-order
+        # request must never be answered with a fabricated confirmation.
+        # The deterministic slot flow asks for item, quantity and timing
+        # until all three are known, and only then calls the order tool.
+        order_response = self._route_food_order(messages, context, lang)
+        if order_response is not None:
+            return order_response
 
         # 2b. Pending-booking slot replies: a booking is in progress and
         # this short reply carries slot info (a date, a room, a guest
@@ -519,13 +804,31 @@ class MockProvider:
                     missing.append("check-out date")
                 noted = ""
                 if len(g_dates) == 1:
-                    noted = f"I've noted check-in: {g_dates[0].isoformat()}. "
+                    if lang is ResponseLanguage.HINDI:
+                        noted = f"मैंने चेक-इन नोट कर लिया है: {g_dates[0].isoformat()}। "
+                    elif lang is ResponseLanguage.HINGLISH:
+                        noted = f"Maine check-in note kar liya hai: {g_dates[0].isoformat()}. "
+                    else:
+                        noted = f"I've noted check-in: {g_dates[0].isoformat()}. "
                 elif g_room is not None:
-                    noted = f"I've noted the {g_room['room_type']}. "
+                    if lang is ResponseLanguage.HINDI:
+                        noted = f"मैंने {g_room['room_type']} नोट कर लिया है। "
+                    elif lang is ResponseLanguage.HINGLISH:
+                        noted = f"Maine {g_room['room_type']} note kar liya hai. "
+                    else:
+                        noted = f"I've noted the {g_room['room_type']}. "
+                if lang is ResponseLanguage.HINDI:
+                    return LLMResponse(content=f"{noted}मुझे अभी चाहिए: {', '.join(missing)}।")
+                if lang is ResponseLanguage.HINGLISH:
+                    return LLMResponse(content=f"{noted}Mujhe abhi chahiye: {', '.join(missing)}.")
                 return LLMResponse(content=f"{noted}I still need: {', '.join(missing)}.")
 
-        # 3. Availability questions.
-        if any(w in lowered for w in ("availab", "vacan", "free room", "any room")):
+        # 3. Availability questions (English / Hinglish / Hindi keywords).
+        if (
+            any(w in lowered for w in ("availab", "vacan", "free room", "any room", "khali"))
+            or "खाली" in user_text
+            or "उपलब्ध" in user_text
+        ):
             if len(dates) >= 2:
                 args: dict[str, Any] = {
                     "hotel_id": context.hotel_id,
@@ -537,14 +840,23 @@ class MockProvider:
                 return LLMResponse(
                     tool_calls=[ToolCallRequest(name="check_room_availability", arguments=args)]
                 )
-            room_hint = f" for the {room['room_type']} room" if room else ""
-            return LLMResponse(
-                content=f"I can check availability{room_hint}. Which dates? "
-                "Please share check-in and check-out dates (YYYY-MM-DD)."
-            )
+            if lang is ResponseLanguage.HINDI:
+                room_hint = f" {room['room_type']} कमरे के लिए" if room else ""
+            elif lang is ResponseLanguage.HINGLISH:
+                room_hint = f" {room['room_type']} room ke liye" if room else ""
+            else:
+                room_hint = f" for the {room['room_type']} room" if room else ""
+            return LLMResponse(content=_t(lang, "avail_ask_dates", room_hint=room_hint))
 
         # 4. Price / rate questions.
-        if any(w in lowered for w in ("price", "rate", "cost", "how much", "tariff", "fare")):
+        if (
+            any(
+                w in lowered
+                for w in ("price", "rate", "cost", "how much", "tariff", "fare", "kitna", "kitne")
+            )
+            or "कीमत" in user_text
+            or "दाम" in user_text
+        ):
             if room and len(dates) >= 2:
                 return LLMResponse(
                     tool_calls=[
@@ -559,20 +871,22 @@ class MockProvider:
                         )
                     ]
                 )
-            return LLMResponse(
-                content="I can share exact pricing. Which room type and dates "
-                "(check-in / check-out, YYYY-MM-DD) should I quote?"
-            )
+            return LLMResponse(content=_t(lang, "price_ask"))
 
         # 5. Policies.
-        if any(
-            w in lowered
-            for w in ("polic", "check-in", "check in", "check-out", "check out", "cancellation")
+        if (
+            any(
+                w in lowered
+                for w in ("polic", "check-in", "check in", "check-out", "check out", "cancellation")
+            )
+            or "चेक-इन" in user_text
+            or "चेक-आउट" in user_text
+            or "नीति" in user_text
         ):
             policy_type = "general"
-            if "check-in" in lowered or "check in" in lowered:
+            if "check-in" in lowered or "check in" in lowered or "चेक-इन" in user_text:
                 policy_type = "check_in"
-            elif "check-out" in lowered or "check out" in lowered:
+            elif "check-out" in lowered or "check out" in lowered or "चेक-आउट" in user_text:
                 policy_type = "check_out"
             elif "cancel" in lowered:
                 policy_type = "cancellation"
@@ -612,7 +926,11 @@ class MockProvider:
             )
 
         # 7. New booking request.
-        if any(w in lowered for w in ("book", "reserve", "reservation")):
+        if (
+            any(w in lowered for w in ("book", "reserve", "reservation"))
+            or "बुकिंग" in user_text
+            or "बुक" in user_text
+        ):
             guests_match = _GUESTS_RE.search(user_text)
             guests = int(guests_match.group(1)) if guests_match else 2
             if room and len(dates) >= 2:
@@ -629,9 +947,7 @@ class MockProvider:
                 missing.append("room type")
             if len(dates) < 2:
                 missing.append("check-in and check-out dates (YYYY-MM-DD)")
-            return LLMResponse(
-                content=f"Happy to help with the booking! I still need: {', '.join(missing)}."
-            )
+            return LLMResponse(content=_t(lang, "booking_missing", missing=", ".join(missing)))
 
         # 7b. Hotel knowledge base (RAG): spa, dining, transfers, local
         # guides — unstructured knowledge, never prices/availability.
@@ -655,9 +971,150 @@ class MockProvider:
                     )
                 ]
             )
+        return LLMResponse(content=_t(lang, "help"))
+
+    # ------------------------------------------------------------------ #
+    # food-order slot flow                                                #
+    # ------------------------------------------------------------------ #
+    _FOOD_WORDS = ("khana", "food", "thali", "breakfast", "lunch", "dinner", "snacks")
+    _ORDER_VERBS = (
+        "order",
+        "book kar",
+        "book karo",
+        "mangwana",
+        "mangwa",
+        "chahiye",
+        "bhej",
+        "pre-book",
+        "prebook",
+        "book",
+    )
+    _QTY_WORDS = {
+        "ek": 1,
+        "one": 1,
+        "do": 2,
+        "two": 2,
+        "teen": 3,
+        "three": 3,
+        "char": 4,
+        "chaar": 4,
+        "four": 4,
+        "paanch": 5,
+        "five": 5,
+    }
+    _TIME_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm|baje)\b", re.IGNORECASE)
+
+    @classmethod
+    def _order_intent(cls, lowered: str) -> bool:
+        has_food = any(w in lowered for w in cls._FOOD_WORDS)
+        has_verb = any(w in lowered for w in cls._ORDER_VERBS)
+        return has_food and has_verb
+
+    @classmethod
+    def _parse_quantity(cls, text: str) -> int | None:
+        lowered = text.lower()
+        qty: int | None = None
+        for match in re.finditer(r"[x×]\s*(\d{1,2})\b", lowered):
+            qty = int(match.group(1))
+        for match in re.finditer(r"(\d{1,2})\s*(plate|plates|pc|pcs|nos?|item|items)?", lowered):
+            value = int(match.group(1))
+            # Skip numbers that are part of a date (handled elsewhere):
+            # a bare 4-digit year or a day<=31 followed by a month digit
+            # pattern is unlikely as a quantity when a unit word exists.
+            if match.group(2):
+                qty = value
+        if qty is None:
+            for word, value in cls._QTY_WORDS.items():
+                if re.search(rf"\b{word}\b", lowered):
+                    qty = value
+        return qty
+
+    @classmethod
+    def _parse_timing(cls, text: str) -> str | None:
+        lowered = text.lower()
+        dates = _extract_dates(text)
+        if dates:
+            return dates[0].isoformat()
+        if cls._TIME_RE.search(text):
+            return "time-mentioned"
+        if any(w in lowered for w in ("abhi", "right now", "now", "turant")):
+            return "now"
+        return None
+
+    def _route_food_order(
+        self,
+        messages: list[dict[str, Any]],
+        context: ProviderContext,
+        lang: ResponseLanguage,
+    ) -> LLMResponse | None:
+        user_texts = [str(m.get("content", "")) for m in messages if m.get("role") == "user"]
+        if not user_texts:
+            return None
+        latest = user_texts[-1]
+        intent = self._order_intent(latest.lower())
+
+        menu = self._latest_tool_result(messages, "get_menu")
+        if menu is None:
+            if not intent:
+                return None
+            # Need the real menu before any item can be ordered.
+            return LLMResponse(
+                tool_calls=[
+                    ToolCallRequest(name="get_menu", arguments={"hotel_id": context.hotel_id})
+                ]
+            )
+
+        items = menu.get("items", [])
+        item_names = [str(i.get("name", "")) for i in items if i.get("name")]
+        combined = "\n".join(user_texts)
+        matched_item: str | None = None
+        for name in item_names:
+            if name.lower() in combined.lower():
+                matched_item = name
+        qty = self._parse_quantity(combined)
+        timing = self._parse_timing(combined)
+
+        if matched_item is None and qty is None and timing is None and not intent:
+            return None  # not an order conversation; let other routes run
+
+        if matched_item is None:
+            listing = ", ".join(item_names[:8]) or "—"
+            return LLMResponse(content=_t(lang, "order_ask_item", items=listing))
+        if qty is None:
+            return LLMResponse(content=_t(lang, "order_ask_qty", item=matched_item))
+        if timing is None:
+            return LLMResponse(content=_t(lang, "order_ask_when", item=matched_item, qty=qty))
+        # All slots known. The order tool needs an identified guest:
+        # resolve identity first (same pattern as the booking flow) and
+        # never place an order for an anonymous conversation.
+        guest_id = context.guest_id
+        if not guest_id:
+            found = self._latest_tool_result(messages, "find_or_create_guest")
+            if found and found.get("guest_id"):
+                guest_id = found["guest_id"]
+        if not guest_id:
+            guest_args = None
+            for past in reversed(user_texts):
+                guest_args = _contact_args(past, context.hotel_id)
+                if guest_args is not None:
+                    break
+            if guest_args is not None:
+                return LLMResponse(
+                    tool_calls=[ToolCallRequest(name="find_or_create_guest", arguments=guest_args)]
+                )
+            return LLMResponse(content=_t(lang, "order_ask_contact"))
         return LLMResponse(
-            content="I can help with room availability, prices, policies, bookings, "
-            "food orders, and service requests. What would you like to do?"
+            tool_calls=[
+                ToolCallRequest(
+                    name="create_food_order",
+                    arguments={
+                        "hotel_id": context.hotel_id,
+                        "guest_id": guest_id,
+                        "order_type": "ROOM_SERVICE",
+                        "items": [{"menu_item_name": matched_item, "quantity": qty}],
+                    },
+                )
+            ]
         )
 
     @staticmethod
@@ -681,8 +1138,13 @@ class MockProvider:
                 content = str(msg.get("content", "")).lower()
                 if (
                     "still need" in content
+                    or "abhi chahiye" in content
+                    or "अभी चाहिए" in content
                     or "happy to help with the booking" in content
+                    or "khushi se help" in content
+                    or "खुशी से मदद" in content
                     or "could you share your name" in content
+                    or "hold kar sakoon" in content
                 ):
                     signal = i
         return signal >= 0 and signal > last_done
@@ -738,15 +1200,12 @@ class MockProvider:
             return LLMResponse(
                 tool_calls=[ToolCallRequest(name="find_or_create_guest", arguments=guest_args)]
             )
-        return LLMResponse(
-            content=(
-                "I'd be happy to book that for you. Could you share your "
-                "name and an email or phone number so I can hold the room?"
-            )
-        )
+        return LLMResponse(content=_t(_lang(context), "booking_ask_contact"))
 
     @staticmethod
-    def _summarize_latest_tool_result(messages: list[dict[str, Any]]) -> str | None:
+    def _summarize_latest_tool_result(
+        messages: list[dict[str, Any]], lang: ResponseLanguage = ResponseLanguage.ENGLISH
+    ) -> str | None:
         """Turn the newest tool result into a guest-facing reply.
 
         Returns None when no tool has run yet for the latest user message.
@@ -778,7 +1237,7 @@ class MockProvider:
                 return None
             if not isinstance(data, dict):
                 return None
-            return _summarize(name, data)
+            return _summarize(name, data, lang)
         return None
 
     @staticmethod

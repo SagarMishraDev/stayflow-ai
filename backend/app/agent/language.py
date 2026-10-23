@@ -1,0 +1,428 @@
+"""Deterministic guest-language detection and response-language policy.
+
+Phase 2 of the HMS upgrade. The agent must answer in the guest's own
+language *and script*:
+
+- Devanagari Hindi  -> Hindi in Devanagari script.
+- Roman Hindi (Hinglish) -> Hinglish in Roman script (never Devanagari).
+- English -> English.
+
+Detection is fully deterministic and server-side (no external API, no
+LLM call): it scores Devanagari characters, Roman-Hindi vocabulary and
+English vocabulary in the guest's latest message. Explicit requests
+("please reply in English", "हिंदी में जवाब दो") always win. Short
+neutral messages (dates, numbers, "ok", names) are ``NEUTRAL`` so the
+caller can fall back to the conversation's established preference
+instead of flipping language on every "yes".
+
+The runner threads the result into the system prompt (for real LLMs)
+and into ``ProviderContext.response_language`` (for the deterministic
+mock). Labels never appear in guest-visible text.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from enum import StrEnum
+
+
+class ResponseLanguage(StrEnum):
+    HINDI = "hindi"  # Devanagari script
+    HINGLISH = "hinglish"  # Roman Hindi mixed with English
+    ENGLISH = "english"
+
+
+class DetectedLanguage(StrEnum):
+    HINDI = "hindi"
+    HINGLISH = "hinglish"
+    ENGLISH = "english"
+    MIXED = "mixed"
+    NEUTRAL = "neutral"
+
+
+@dataclass(frozen=True)
+class LanguageDetection:
+    detected: DetectedLanguage
+    response_language: ResponseLanguage | None  # None when NEUTRAL
+    explicit_request: ResponseLanguage | None = None
+    devanagari_letters: int = 0
+    roman_hindi_hits: int = 0
+    english_hits: int = 0
+
+
+_DEVANAGARI_RE = re.compile(r"[ऀ-ॿ]")
+_LETTER_RE = re.compile(r"[A-Za-zऀ-ॿ]")
+_WORD_RE = re.compile(r"[a-z]+(?:'[a-z]+)?")
+
+# Roman-Hindi vocabulary common in guest messages (roman script). Hotel
+# words shared with English (hotel, room, booking) are deliberately NOT
+# scored here — they appear in every language.
+_ROMAN_HINDI_WORDS = {
+    "kya",
+    "hai",
+    "hain",
+    "mein",
+    "mai",
+    "mera",
+    "meri",
+    "mere",
+    "hamara",
+    "hamari",
+    "aap",
+    "aapka",
+    "aapke",
+    "tum",
+    "mujhe",
+    "humein",
+    "humko",
+    "chahiye",
+    "milega",
+    "milegi",
+    "mil",
+    "sakta",
+    "sakti",
+    "sakte",
+    "kar",
+    "karo",
+    "karna",
+    "karke",
+    "do",
+    "dena",
+    "dijiye",
+    "batao",
+    "bataiye",
+    "khana",
+    "khali",
+    "kamra",
+    "kamre",
+    "wala",
+    "wali",
+    "wale",
+    "nahi",
+    "nahin",
+    "na",
+    "toh",
+    "bhi",
+    "aur",
+    "ya",
+    "ke",
+    "ki",
+    "ka",
+    "ko",
+    "se",
+    "par",
+    "pe",
+    "lie",
+    "liye",
+    "baad",
+    "pahle",
+    "pehle",
+    "kab",
+    "kaise",
+    "kahan",
+    "kidhar",
+    "kitna",
+    "kitne",
+    "kitni",
+    "kyun",
+    "kyon",
+    "bhai",
+    "haan",
+    "acha",
+    "accha",
+    "theek",
+    "thik",
+    "kal",
+    "aaj",
+    "abhi",
+    "subah",
+    "sham",
+    "shaam",
+    "raat",
+    "namaste",
+    "namaskar",
+    "dhanyavad",
+    "shukriya",
+    "kripya",
+    "ho",
+    "hoga",
+    "hogi",
+    "tha",
+    "thi",
+    "raha",
+    "rahi",
+    "kr",
+    "bhej",
+    "bhejo",
+}
+
+_ENGLISH_WORDS = {
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "do",
+    "does",
+    "you",
+    "your",
+    "have",
+    "has",
+    "any",
+    "please",
+    "can",
+    "could",
+    "would",
+    "should",
+    "i",
+    "we",
+    "my",
+    "me",
+    "want",
+    "need",
+    "what",
+    "when",
+    "where",
+    "how",
+    "much",
+    "many",
+    "for",
+    "to",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "in",
+    "on",
+    "at",
+    "with",
+    "without",
+    "available",
+    "availability",
+    "book",
+    "booking",
+    "reserve",
+    "reservation",
+    "check",
+    "price",
+    "cost",
+    "room",
+    "rooms",
+    "hotel",
+    "guest",
+    "guests",
+    "night",
+    "nights",
+    "today",
+    "tomorrow",
+    "hello",
+    "hi",
+    "thanks",
+    "thank",
+}
+
+# Phrases that are unmistakably Roman Hindi even with shared words.
+_ROMAN_HINDI_PHRASES = (
+    "hai kya",
+    "milega na",
+    "ke liye",
+    "ke lie",
+    "kar do",
+    "kar dijiye",
+    "bata do",
+    "hai to",
+    "khali hai",
+    "kya aap",
+    "mujhe chahiye",
+    "hamari",
+    "aapka",
+    "check in ke",
+    "check-in ke",
+)
+
+_EXPLICIT_PATTERNS: list[tuple[re.Pattern[str], ResponseLanguage]] = [
+    # Devanagari requests.
+    (re.compile(r"हिंदी\s*में|हिन्दी\s*में|हिंदी\s*मे"), ResponseLanguage.HINDI),
+    (re.compile(r"अंग्रेज़ी\s*में|अंग्रेजी\s*में"), ResponseLanguage.ENGLISH),
+    # Roman requests.
+    (
+        re.compile(
+            r"\b(in|reply in|answer in|respond in|baat)\s+hindi\b|\bhindi\s+(me|mein)\b",
+            re.IGNORECASE,
+        ),
+        ResponseLanguage.HINDI,
+    ),
+    (
+        re.compile(
+            r"\b(in|reply in|answer in|respond in)\s+english\b|\benglish\s+(me|mein)\b",
+            re.IGNORECASE,
+        ),
+        ResponseLanguage.ENGLISH,
+    ),
+    (re.compile(r"\bhinglish\b", re.IGNORECASE), ResponseLanguage.HINGLISH),
+]
+
+
+def detect_language(text: str) -> LanguageDetection:
+    """Classify one guest message. Pure function — no I/O, no state."""
+    raw = text or ""
+    for pattern, language in _EXPLICIT_PATTERNS:
+        if pattern.search(raw):
+            return LanguageDetection(
+                detected=DetectedLanguage.MIXED,
+                response_language=language,
+                explicit_request=language,
+            )
+
+    devanagari = len(_DEVANAGARI_RE.findall(raw))
+    letters = len(_LETTER_RE.findall(raw))
+    lowered = raw.lower()
+    words = _WORD_RE.findall(lowered)
+    hindi_hits = sum(1 for w in words if w in _ROMAN_HINDI_WORDS)
+    english_hits = sum(1 for w in words if w in _ENGLISH_WORDS)
+    for phrase in _ROMAN_HINDI_PHRASES:
+        if phrase in lowered:
+            hindi_hits += 2
+
+    if letters == 0:
+        return LanguageDetection(DetectedLanguage.NEUTRAL, None)
+
+    dev_ratio = devanagari / letters
+    if devanagari >= 4 and dev_ratio >= 0.35:
+        # Devanagari-dominant: Hindi reply (English hotel terms are fine
+        # inside a Hindi reply, per the spec's mixed example).
+        return LanguageDetection(
+            DetectedLanguage.HINDI,
+            ResponseLanguage.HINDI,
+            devanagari_letters=devanagari,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+    if devanagari >= 4:
+        # Some Devanagari but Roman-dominant text.
+        if hindi_hits >= english_hits:
+            return LanguageDetection(
+                DetectedLanguage.MIXED,
+                ResponseLanguage.HINGLISH,
+                devanagari_letters=devanagari,
+                roman_hindi_hits=hindi_hits,
+                english_hits=english_hits,
+            )
+        return LanguageDetection(
+            DetectedLanguage.MIXED,
+            ResponseLanguage.ENGLISH,
+            devanagari_letters=devanagari,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+
+    # Pure Roman script from here.
+    if hindi_hits >= 2 and english_hits >= 2:
+        # Genuinely mixed: natural Hinglish when the Hindi share is real,
+        # otherwise the dominant language (English).
+        if hindi_hits >= english_hits or hindi_hits >= 3:
+            return LanguageDetection(
+                DetectedLanguage.MIXED,
+                ResponseLanguage.HINGLISH,
+                roman_hindi_hits=hindi_hits,
+                english_hits=english_hits,
+            )
+        return LanguageDetection(
+            DetectedLanguage.MIXED,
+            ResponseLanguage.ENGLISH,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+    if hindi_hits >= 1 and hindi_hits >= english_hits:
+        return LanguageDetection(
+            DetectedLanguage.HINGLISH,
+            ResponseLanguage.HINGLISH,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+    if hindi_hits >= 2:
+        return LanguageDetection(
+            DetectedLanguage.HINGLISH,
+            ResponseLanguage.HINGLISH,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+    if english_hits >= 1 or len(words) >= 2:
+        return LanguageDetection(
+            DetectedLanguage.ENGLISH,
+            ResponseLanguage.ENGLISH,
+            roman_hindi_hits=hindi_hits,
+            english_hits=english_hits,
+        )
+    # Single unknown word / date / number / "yes" / "ok": no signal.
+    return LanguageDetection(
+        DetectedLanguage.NEUTRAL,
+        None,
+        roman_hindi_hits=hindi_hits,
+        english_hits=english_hits,
+    )
+
+
+def resolve_response_language(
+    latest_text: str,
+    history_texts: list[str],
+    stored_preference: str | None,
+) -> tuple[ResponseLanguage, LanguageDetection]:
+    """Effective response language for this turn.
+
+    Priority: explicit request in the latest message > detection of the
+    latest message > most recent classifiable guest message in history >
+    stored conversation preference > English.
+    """
+    detection = detect_language(latest_text)
+    if detection.response_language is not None:
+        return detection.response_language, detection
+    for past in reversed(history_texts):
+        past_detection = detect_language(past)
+        if past_detection.response_language is not None:
+            return past_detection.response_language, detection
+    if stored_preference:
+        try:
+            return ResponseLanguage(stored_preference), detection
+        except ValueError:
+            pass
+    return ResponseLanguage.ENGLISH, detection
+
+
+_LANGUAGE_INSTRUCTIONS: dict[ResponseLanguage, str] = {
+    ResponseLanguage.HINDI: (
+        "RESPONSE LANGUAGE FOR THIS TURN: Hindi. Write the ENTIRE reply in "
+        "natural, grammatically correct Hindi using the Devanagari script. "
+        "Use simple, everyday Hindi — write only real Hindi words; NEVER "
+        "invent transliterated non-words. Common English hotel terms "
+        "(check-in, check-out, room service, booking) may stay in English "
+        "where a Hindi speaker would naturally use them. Keep names, "
+        "prices, dates, times and IDs exactly as the tools returned them."
+    ),
+    ResponseLanguage.HINGLISH: (
+        "RESPONSE LANGUAGE FOR THIS TURN: Hinglish. Write the ENTIRE reply "
+        "in Roman script only — absolutely NO Devanagari characters. Use "
+        "natural Roman Hindi mixed with familiar English hotel words, the "
+        "way the guest is writing (e.g. 'Bilkul, room available hai — aap "
+        "check-in date bata dijiye'). Write only real words; NEVER invent "
+        "garbled transliterations. Keep names, prices, dates, times and "
+        "IDs exactly as the tools returned them."
+    ),
+    ResponseLanguage.ENGLISH: (
+        "RESPONSE LANGUAGE FOR THIS TURN: English. Write the entire reply "
+        "in clear, natural English. Keep names, prices, dates, times and "
+        "IDs exactly as the tools returned them."
+    ),
+}
+
+
+def build_language_instruction(language: ResponseLanguage) -> str:
+    """Per-turn language instruction appended to the system prompt."""
+    return _LANGUAGE_INSTRUCTIONS[language]
+
+
+def script_of(text: str) -> str:
+    """'devanagari' if the text contains Devanagari, else 'roman'."""
+    return "devanagari" if _DEVANAGARI_RE.search(text or "") else "roman"

@@ -2,23 +2,50 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { useAuth } from "../lib/auth";
 import { useHotels, useNotifications } from "../lib/queries";
 
-const NAV: { to: string; label: string; roles?: ("staff" | "hotel_admin" | "super_admin")[] }[] = [
+import type { RoleName } from "../lib/roles";
+
+const ALL: RoleName[] = [
+  "super_admin",
+  "hotel_admin",
+  "manager",
+  "staff",
+  "receptionist",
+  "kitchen",
+  "housekeeping",
+  "accountant",
+  "maintenance",
+];
+const OPS: RoleName[] = ["super_admin", "hotel_admin", "manager", "staff", "receptionist"];
+const NAV: { to: string; label: string; roles?: RoleName[] }[] = [
   { to: "/", label: "Home" },
-  { to: "/bookings", label: "Bookings" },
-  { to: "/rooms", label: "Rooms & rates" },
-  { to: "/availability", label: "Availability" },
-  { to: "/negotiations", label: "Negotiations" },
-  { to: "/service-requests", label: "Service requests" },
-  { to: "/conversations", label: "Guest chats" },
-  { to: "/guests", label: "Guests" },
-  { to: "/menu", label: "Menu" },
-  { to: "/orders", label: "Food orders" },
-  { to: "/services", label: "Hotel services" },
-  { to: "/knowledge", label: "Knowledge base" },
+  {
+    to: "/analytics",
+    label: "Analytics",
+    roles: ["super_admin", "hotel_admin", "manager", "accountant"],
+  },
+  { to: "/bookings", label: "Bookings", roles: [...OPS, "accountant", "housekeeping"] },
+  { to: "/rooms", label: "Rooms & rates", roles: ALL },
+  { to: "/availability", label: "Availability", roles: [...OPS, "housekeeping"] },
+  { to: "/negotiations", label: "Negotiations", roles: OPS },
+  {
+    to: "/service-requests",
+    label: "Service requests",
+    roles: [...OPS, "housekeeping", "maintenance"],
+  },
+  { to: "/conversations", label: "Guest chats", roles: OPS },
+  { to: "/guests", label: "Guests", roles: OPS },
+  { to: "/menu", label: "Menu", roles: [...OPS, "kitchen"] },
+  { to: "/orders", label: "Food orders", roles: [...OPS, "kitchen"] },
+  { to: "/services", label: "Hotel services", roles: [...OPS, "housekeeping", "maintenance"] },
+  { to: "/knowledge", label: "Knowledge base", roles: OPS },
   { to: "/notifications", label: "Notifications" },
-  { to: "/settings", label: "Hotel settings" },
-  { to: "/staff", label: "Staff & roles", roles: ["hotel_admin", "super_admin"] },
-  { to: "/audit-log", label: "Audit log", roles: ["super_admin"] },
+  { to: "/settings", label: "Hotel settings", roles: OPS },
+  { to: "/staff", label: "Staff & roles", roles: ["hotel_admin", "super_admin", "manager"] },
+  {
+    to: "/audit-log",
+    label: "Audit log",
+    roles: ["hotel_admin", "super_admin", "manager", "accountant"],
+  },
 ];
 
 function linkClass(active: boolean): string {
@@ -36,7 +63,7 @@ export default function Layout() {
 
   const unread = notifications?.length ?? 0;
   const visibleNav = NAV.filter(
-    (item) => !item.roles || (role && item.roles.includes(role as "staff")),
+    (item) => !item.roles || (role && item.roles.includes(role as RoleName)),
   );
 
   return (

@@ -46,6 +46,12 @@ class ProviderContext:
     room_types: list[dict[str, Any]] = field(default_factory=list)
     guest_id: int | None = None
     guest_name: str | None = None
+    # Effective response language for this turn ("hindi" | "hinglish" |
+    # "english"), resolved deterministically by the runner from the
+    # guest's latest message (see app.agent.language). Providers that
+    # generate their own text (the mock) must honour it; LLM providers
+    # additionally receive it as a system-prompt instruction.
+    response_language: str = "english"
 
 
 class LLMProvider(Protocol):

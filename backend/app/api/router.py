@@ -10,8 +10,21 @@ from sqlalchemy.orm import Session
 from app.agent.runner import run_chat
 from app.agent.schemas import ChatRequest, ChatResponse, ToolTraceResponse
 from app.core.config import get_settings
+from app.core.permissions import (
+    MANAGER_CREATABLE_ROLES,
+    has_permission,
+    require_any_permission,
+    require_permission,
+)
 from app.core.rate_limit import rate_limit_chat, rate_limit_login
-from app.core.roles import HOTEL_ADMIN, SUPER_ADMIN, is_super_admin, normalize_role
+from app.core.roles import (
+    HOTEL_ADMIN,
+    MANAGER,
+    SUPER_ADMIN,
+    StaffRole,
+    is_super_admin,
+    normalize_role,
+)
 from app.core.security import (
     create_access_token,
     get_current_user,
@@ -327,6 +340,7 @@ def login(
             hotel_user_id=user.id,
             hotel_id=user.hotel_id,
             role=user.role,
+            token_version=int(getattr(user, "token_version", 0) or 0),
         )
     )
 
@@ -393,27 +407,139 @@ def delete_hotel(
 
 
 # --------------------------------------------------------------------- #
-# Hotel staff users (RBAC: management requires HOTEL_ADMIN/SUPER_ADMIN)   #
+# Hotel staff users (HMS Phase 3 RBAC)                                    #
+# HOTEL_ADMIN/SUPER_ADMIN manage any role except SUPER_ADMIN (never via  #
+# the API); MANAGER manages only MANAGER_CREATABLE_ROLES.                #
 # --------------------------------------------------------------------- #
-_MANAGE_USERS = require_roles(HOTEL_ADMIN, SUPER_ADMIN)
+_MANAGE_USERS = require_roles(HOTEL_ADMIN, SUPER_ADMIN, MANAGER)
+_CREATE_USERS = require_permission("staff.create_staff")
+_UPDATE_USERS = require_permission("staff.manage")
+
+# Privilege ranking used only for the "never raise your own role" check.
+_ROLE_RANK: dict[StaffRole, int] = {
+    StaffRole.SUPER_ADMIN: 100,
+    StaffRole.HOTEL_ADMIN: 90,
+    StaffRole.MANAGER: 80,
+    StaffRole.ACCOUNTANT: 50,
+    StaffRole.RECEPTIONIST: 40,
+    StaffRole.STAFF: 40,
+    StaffRole.KITCHEN: 30,
+    StaffRole.HOUSEKEEPING: 30,
+    StaffRole.MAINTENANCE: 30,
+}
 
 
 def _validate_role_assignment(role: str | None, current_user: HotelUser) -> str:
-    """Validate a staff role string being assigned by ``current_user``.
+    """Validate a role being *created* by ``current_user`` (Phase 3 rules).
 
-    Only a super admin may grant the super-admin role; unknown role strings
-    are rejected. Returns the role value as provided.
+    - Unknown roles -> 422.
+    - ``SUPER_ADMIN`` can never be created via the API -> 403 for everyone.
+    - ``MANAGER`` may create only MANAGER_CREATABLE_ROLES -> 403 otherwise.
+    - Creating a MANAGER/HOTEL_ADMIN additionally requires
+      ``staff.create_manager`` (admin only).
+    Returns the role value as provided.
     """
     if role is None:
         raise HTTPException(status_code=422, detail="Role is required")
-    if normalize_role(role) is None:
+    normalized = normalize_role(role)
+    if normalized is None:
         raise HTTPException(status_code=422, detail=f"Unknown role: {role!r}")
-    if normalize_role(role) is SUPER_ADMIN and not is_super_admin(current_user.role):
+    if normalized is SUPER_ADMIN:
         raise HTTPException(
             status_code=403,
-            detail="Only a super admin can grant the super_admin role",
+            detail="The super_admin role cannot be created via the API",
+        )
+    actor = normalize_role(current_user.role)
+    if actor is MANAGER:
+        if normalized not in MANAGER_CREATABLE_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Managers can only create receptionist, kitchen, "
+                "housekeeping, accountant, maintenance or staff users",
+            )
+    elif actor in (HOTEL_ADMIN, SUPER_ADMIN):
+        if normalized in (StaffRole.MANAGER, HOTEL_ADMIN) and not has_permission(
+            current_user.role, "staff.create_manager"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permission: staff.create_manager required",
+            )
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Insufficient role to create staff users",
         )
     return role
+
+
+def _validate_role_change(
+    new_role: str | None,
+    target: HotelUser,
+    current_user: HotelUser,
+) -> str:
+    """Validate changing ``target``'s role to ``new_role`` (Phase 3 rules)."""
+    if new_role is None:
+        raise HTTPException(status_code=422, detail="Role is required")
+    normalized = normalize_role(new_role)
+    if normalized is None:
+        raise HTTPException(status_code=422, detail=f"Unknown role: {new_role!r}")
+    if normalized is SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="The super_admin role cannot be granted via the API",
+        )
+    actor = normalize_role(current_user.role)
+    # Nobody may raise their own role.
+    if current_user.id == target.id:
+        current_rank = _ROLE_RANK.get(normalize_role(target.role), 0)  # type: ignore[arg-type]
+        if _ROLE_RANK.get(normalized, 0) > current_rank:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot raise your own role",
+            )
+        # A self role-change to a different (non-raising) role is also
+        # refused for managers etc. via the manager rules below; admins
+        # demoting themselves fall through to the generic checks.
+    if actor is MANAGER:
+        if normalized not in MANAGER_CREATABLE_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Managers cannot assign admin, manager or super_admin roles",
+            )
+    elif actor in (HOTEL_ADMIN, SUPER_ADMIN):
+        if normalized in (StaffRole.MANAGER, HOTEL_ADMIN) and not has_permission(
+            current_user.role, "staff.create_manager"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permission: staff.create_manager required",
+            )
+    else:
+        raise HTTPException(status_code=403, detail="Insufficient role to manage staff users")
+    return new_role
+
+
+def _assert_can_modify_user(target: HotelUser, current_user: HotelUser) -> None:
+    """Whether ``current_user`` may update/deactivate/delete ``target``."""
+    actor = normalize_role(current_user.role)
+    target_role = normalize_role(target.role)
+    if actor in (HOTEL_ADMIN, SUPER_ADMIN):
+        if target_role is SUPER_ADMIN and actor is not SUPER_ADMIN:
+            raise HTTPException(
+                status_code=403,
+                detail="Only a super admin can modify a super_admin account",
+            )
+        return
+    if actor is MANAGER:
+        if target_role not in MANAGER_CREATABLE_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Managers can only manage receptionist, kitchen, "
+                "housekeeping, accountant, maintenance or staff users",
+            )
+        return
+    raise HTTPException(status_code=403, detail="Insufficient role to manage staff users")
 
 
 @router.post(
@@ -425,11 +551,12 @@ def _validate_role_assignment(role: str | None, current_user: HotelUser) -> str:
 def create_hotel_user(
     payload: HotelUserCreate,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(_MANAGE_USERS),
+    current_user: HotelUser = Depends(_CREATE_USERS),
 ) -> HotelUser:
     """Create a staff user. Password is hashed; role assignment is guarded.
 
-    Hotel admins create users for their own hotel. Super admins may pass
+    Hotel admins/super admins create any role except super_admin.
+    Managers create only operational roles. Super admins may pass
     ``hotel_id`` to create a user in another hotel (audited).
     """
     target_hotel_id = current_user.hotel_id
@@ -466,6 +593,7 @@ def create_hotel_user(
         email=payload.email,
         phone=payload.phone,
         role=role,
+        department=payload.department,
         password_hash=hash_password(payload.password),
     )
     db.add(new_user)
@@ -478,7 +606,7 @@ def create_hotel_user(
         action="hotel_user.created",
         entity_type="hotel_user",
         entity_id=new_user.id,
-        details={"email": new_user.email, "role": new_user.role},
+        details={"email": new_user.email, "role": new_user.role, "department": new_user.department},
     )
     _commit_or_409(db, _CONFLICT_DETAIL)
     db.refresh(new_user)
@@ -528,18 +656,42 @@ def update_hotel_user(
     user_id: int,
     payload: HotelUserUpdate,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(_MANAGE_USERS),
+    current_user: HotelUser = Depends(_UPDATE_USERS),
 ) -> HotelUser:
     existing = _get_owned(db, HotelUser, user_id, "Hotel user not found", current_user)
+    _assert_can_modify_user(existing, current_user)
     update_data = payload.model_dump(exclude_unset=True)
+    # Nobody can deactivate themselves.
+    if update_data.get("is_active") is False and current_user.id == existing.id:
+        raise HTTPException(status_code=403, detail="You cannot deactivate yourself")
     new_password = update_data.pop("password", None)
+    role_changed = False
+    if "role" in update_data:
+        if update_data["role"] is None:
+            raise HTTPException(status_code=422, detail="Role is required")
+        old_role = normalize_role(existing.role)
+        validated = _validate_role_change(update_data["role"], existing, current_user)
+        update_data["role"] = validated
+        role_changed = normalize_role(validated) != old_role
     if new_password is not None:
         existing.password_hash = hash_password(new_password)
-    if "role" in update_data:
-        update_data["role"] = _validate_role_assignment(update_data["role"], current_user)
     deactivated = update_data.get("is_active") is False and existing.is_active
+    # Privileged changes revoke existing sessions (Phase 3 token version).
+    if role_changed or new_password is not None or deactivated:
+        existing.token_version = int(getattr(existing, "token_version", 0) or 0) + 1
     _apply_update(existing, update_data)
     db.flush()
+    if role_changed:
+        log_action(
+            db,
+            hotel_id=existing.hotel_id,
+            actor_type="staff",
+            actor_id=current_user.id,
+            action="hotel_user.role_changed",
+            entity_type="hotel_user",
+            entity_id=existing.id,
+            details={"changed": sorted(update_data), "role": existing.role},
+        )
     log_action(
         db,
         hotel_id=existing.hotel_id,
@@ -566,9 +718,12 @@ def update_hotel_user(
 def delete_hotel_user(
     user_id: int,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(_MANAGE_USERS),
+    current_user: HotelUser = Depends(_UPDATE_USERS),
 ) -> None:
+    if user_id == current_user.id:
+        raise HTTPException(status_code=403, detail="You cannot delete yourself")
     user = _get_owned(db, HotelUser, user_id, "Hotel user not found", current_user)
+    _assert_can_modify_user(user, current_user)
     log_action(
         db,
         hotel_id=user.hotel_id,
@@ -1522,7 +1677,7 @@ def update_booking(
     booking_id: int,
     booking: BookingUpdate,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(get_current_user),
+    current_user: HotelUser = Depends(require_permission("bookings.manage")),
 ) -> Booking:
     existing = _get_owned(db, Booking, booking_id, "Booking not found", current_user)
     update_data = booking.model_dump(exclude_unset=True)
@@ -1750,7 +1905,7 @@ def update_order(
     order_id: int,
     order: OrderUpdate,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(get_current_user),
+    current_user: HotelUser = Depends(require_any_permission("orders.manage", "orders.kitchen")),
 ) -> Order:
     existing = _get_owned(db, Order, order_id, "Order not found", current_user)
     update_data = order.model_dump(exclude_unset=True)
@@ -2331,7 +2486,7 @@ def get_audit_logs(
     action: str | None = None,
     limit: int = 100,
     db: Session = Depends(get_db, scope="function"),
-    current_user: HotelUser = Depends(get_current_user),
+    current_user: HotelUser = Depends(require_permission("audit.view")),
 ) -> list[AuditLogResponse]:
     scoped_hotel_id = _scoped_hotel_id(hotel_id, current_user)
     stmt = (
@@ -2433,5 +2588,16 @@ def agent_chat(
         conversation_id=result.conversation_id,
         iterations=result.iterations,
         degraded=result.degraded,
-        tool_trace=[ToolTraceResponse(**entry.__dict__) for entry in result.tool_trace],
+        detected_language=result.detected_language,
+        response_language=result.response_language,
+        tool_trace=[
+            ToolTraceResponse(
+                tool=entry.tool,
+                arguments=entry.arguments,
+                ok=entry.ok,
+                result=entry.result,
+                error=entry.error,
+            )
+            for entry in result.tool_trace
+        ],
     )

@@ -22,6 +22,8 @@ class OrderResponse(BaseModel):
     order_type: str
     table_number: int | None
     status: str
+    status_reason: str | None = None
+    scheduled_for: datetime | None = None
     total_amount: Decimal
     created_at: datetime
     is_active: bool

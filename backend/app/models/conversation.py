@@ -29,6 +29,16 @@ class Conversation(Base):
         nullable=False,
     )
 
+    # Guest's established response-language preference for this
+    # conversation ("hindi" | "hinglish" | "english"), resolved
+    # deterministically from their messages (app.agent.language). Updated
+    # whenever the guest writes in another language/script; used only as
+    # a fallback for neutral messages (dates, "ok", numbers).
+    preferred_language: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,

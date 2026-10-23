@@ -146,6 +146,19 @@ def create_food_order(db: Session, ctx: ToolContext, args: CreateFoodOrderArgs) 
 
     order.total_amount = total
     db.flush()
+    # Kitchen queue notification (role-addressed; operational facts only).
+    from app.services.notifications import notify_role
+
+    notify_role(
+        db,
+        hotel_id=args.hotel_id,
+        target_role="kitchen",
+        type="order.new",
+        title="New food order",
+        message=f"New {order_type} order #{order.id} ({len(lines)} item lines).",
+        reference_type="order",
+        reference_id=order.id,
+    )
     log_action(
         db,
         hotel_id=args.hotel_id,

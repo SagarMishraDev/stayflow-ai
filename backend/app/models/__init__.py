@@ -18,6 +18,7 @@ from app.models.notification import Notification
 from app.models.offer import Offer
 from app.models.order import Order
 from app.models.order_item import OrderItem
+from app.models.payment import Payment
 from app.models.policy import Policy
 from app.models.rate import Rate
 from app.models.room import Room
@@ -45,6 +46,7 @@ __all__ = [
     "NegotiationRule",
     "Notification",
     "Offer",
+    "Payment",
     "Order",
     "OrderItem",
     "Policy",

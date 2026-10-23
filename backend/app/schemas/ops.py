@@ -20,7 +20,8 @@ class AuditLogResponse(BaseModel):
 class NotificationResponse(BaseModel):
     id: int
     hotel_id: int
-    user_id: int
+    user_id: int | None
+    target_role: str | None = None
     type: str
     title: str
     message: str

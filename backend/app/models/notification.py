@@ -16,9 +16,16 @@ class Notification(Base):
         nullable=False,
     )
 
-    user_id: Mapped[int] = mapped_column(
+    # A notification is addressed to a specific user OR to a role queue
+    # (target_role) — exactly one of the two is set.
+    user_id: Mapped[int | None] = mapped_column(
         ForeignKey("hotel_users.id"),
-        nullable=False,
+        nullable=True,
+    )
+
+    target_role: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
     )
 
     type: Mapped[str] = mapped_column(
