@@ -10,6 +10,10 @@ decides *which* action to take.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -18,6 +22,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.availability import Availability
 from app.models.booking import Booking
 from app.models.booking_draft import (
@@ -29,6 +34,7 @@ from app.models.booking_draft import (
 from app.models.guest import Guest
 from app.models.hotel import Hotel
 from app.models.negotiation_rule import NegotiationRule
+from app.models.payment import Payment
 from app.models.rate import Rate
 from app.models.room import Room
 from app.services.audit import log_action
@@ -593,6 +599,335 @@ def update_booking_dates_guests(
             entity_id=booking.id,
             details=changes,
         )
+
+
+# --------------------------------------------------------------------- #
+# Booking modification (guest-facing, two-phase like booking drafts)     #
+# --------------------------------------------------------------------- #
+
+# Only bookings in these statuses may be modified by the guest, and only
+# while the check-in date is still in the future (hotel-local).
+MODIFIABLE_STATUSES = ("PENDING", "CONFIRMED")
+
+# How long a modification preview token stays valid.
+MODIFICATION_TOKEN_TTL_MINUTES = 15
+
+
+def modification_ineligibility_reason(booking: Booking, today: date) -> str | None:
+    """Why `booking` cannot be modified, or None when it can.
+
+    Returns a stable machine-readable code ("cancelled",
+    "status_not_modifiable", "check_in_passed") — callers localise it.
+    ``today`` is the current date in the hotel's timezone.
+    """
+    if booking.booking_status == "CANCELLED":
+        return "cancelled"
+    if booking.booking_status not in MODIFIABLE_STATUSES:
+        return "status_not_modifiable"
+    if booking.check_in <= today:
+        return "check_in_passed"
+    return None
+
+
+@dataclass
+class ModificationQuote:
+    """A fully validated prospective modification (nothing applied yet)."""
+
+    booking_id: int
+    old_room_id: int
+    new_room_id: int
+    old_check_in: date
+    new_check_in: date
+    old_check_out: date
+    new_check_out: date
+    old_number_of_guests: int
+    new_number_of_guests: int
+    old_total: Decimal
+    new_total: Decimal
+    currency: str
+    net_captured: Decimal  # captured minus refunded, from payment records
+    amount_due: Decimal  # still to collect after the change (>= 0)
+    refund_due: Decimal  # overpaid by the guest after the change (>= 0)
+
+    @property
+    def difference(self) -> Decimal:
+        return self.new_total - self.old_total
+
+
+def _payment_totals(db: Session, booking_id: int) -> tuple[Decimal, list[Payment]]:
+    """(net captured, pending rows) for a booking.
+
+    Net captured = sum(captured) - sum(refunded). Failed rows are ignored:
+    they moved no money. Pending rows are system-managed receivables.
+    """
+    rows = db.scalars(select(Payment).where(Payment.booking_id == booking_id)).all()
+    captured = sum((p.amount for p in rows if p.status == "captured"), Decimal("0.00"))
+    refunded = sum((p.amount for p in rows if p.status == "refunded"), Decimal("0.00"))
+    pending = [p for p in rows if p.status == "pending"]
+    return captured - refunded, pending
+
+
+def validate_modification(
+    db: Session,
+    booking: Booking,
+    *,
+    today: date,
+    new_room_id: int | None = None,
+    new_check_in: date | None = None,
+    new_check_out: date | None = None,
+    new_number_of_guests: int | None = None,
+) -> ModificationQuote:
+    """Validate a prospective modification and price it deterministically.
+
+    Enforces every rule a modification must obey: eligibility (future
+    check-in, modifiable status), at least one real change, room/hotel
+    ownership, capacity, availability for the new stay EXCLUDING the
+    booking itself, and full rate coverage for the new total. Raises
+    BookingError on any failure. Applies nothing.
+    """
+    reason = modification_ineligibility_reason(booking, today)
+    if reason == "cancelled":
+        raise BookingError(422, "This booking has been cancelled and cannot be modified.")
+    if reason == "status_not_modifiable":
+        raise BookingError(
+            422,
+            f"A booking with status {booking.booking_status} cannot be modified.",
+        )
+    if reason == "check_in_passed":
+        raise BookingError(
+            422,
+            "This booking's check-in date has already arrived or passed, so it "
+            "can no longer be changed online. Please contact reception for help.",
+        )
+
+    room_id = new_room_id if new_room_id is not None else booking.room_id
+    check_in = new_check_in if new_check_in is not None else booking.check_in
+    check_out = new_check_out if new_check_out is not None else booking.check_out
+    guests = (
+        new_number_of_guests if new_number_of_guests is not None else booking.number_of_guests
+    )
+
+    if (
+        room_id == booking.room_id
+        and check_in == booking.check_in
+        and check_out == booking.check_out
+        and guests == booking.number_of_guests
+    ):
+        raise BookingError(422, "No changes were requested for this booking.")
+    if check_out <= check_in:
+        raise BookingError(422, "check_out must be after check_in")
+    if guests <= 0:
+        raise BookingError(422, "number_of_guests must be positive")
+
+    room = db.get(Room, room_id)
+    if room is None or room.hotel_id != booking.hotel_id:
+        raise BookingError(404, "Room not found for this hotel")
+    if guests > room.capacity:
+        raise BookingError(422, "Number of guests exceeds room capacity")
+
+    availability = check_availability(
+        db, room_id, check_in, check_out, exclude_booking_id=booking.id
+    )
+    sold_out = [n.date.isoformat() for n in availability if n.available < 1]
+    if sold_out:
+        raise BookingError(
+            422,
+            f"No availability for the new stay on: {', '.join(sold_out)}. "
+            "Please choose different dates or another room type.",
+        )
+
+    quote = quote_booking_price(db, room_id, check_in, check_out)
+    if not quote.fully_priced:
+        missing = ", ".join(d.isoformat() for d in quote.missing_dates)
+        raise BookingError(422, f"No rate configured for date(s): {missing}.")
+
+    net_captured, _pending = _payment_totals(db, booking.id)
+    new_total = quote.total
+    return ModificationQuote(
+        booking_id=booking.id,
+        old_room_id=booking.room_id,
+        new_room_id=room_id,
+        old_check_in=booking.check_in,
+        new_check_in=check_in,
+        old_check_out=booking.check_out,
+        new_check_out=check_out,
+        old_number_of_guests=booking.number_of_guests,
+        new_number_of_guests=guests,
+        old_total=booking.final_price,
+        new_total=new_total,
+        currency=quote.currency,
+        net_captured=net_captured,
+        amount_due=max(new_total - net_captured, Decimal("0.00")),
+        refund_due=max(net_captured - new_total, Decimal("0.00")),
+    )
+
+
+def _modification_token_secret() -> bytes:
+    return get_settings().jwt_secret_key.encode("utf-8")
+
+
+def _sign_modification_payload(payload_b64: str) -> str:
+    return hmac.new(
+        _modification_token_secret(), payload_b64.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+
+
+def issue_modification_token(quote: ModificationQuote) -> tuple[str, datetime]:
+    """Mint the confirmation-gate token for a modification preview.
+
+    The token binds the exact previewed change (booking, room, dates,
+    guests, new total) and expires after MODIFICATION_TOKEN_TTL_MINUTES.
+    :func:`modify_booking` refuses to mutate anything without a valid
+    token, so the confirmation gate never depends on the caller
+    remembering that a preview happened — the same guarantee the
+    booking draft gives :func:`confirm_booking_draft`.
+    """
+    expires_at = datetime.now(UTC) + timedelta(minutes=MODIFICATION_TOKEN_TTL_MINUTES)
+    payload = {
+        "booking_id": quote.booking_id,
+        "room_id": quote.new_room_id,
+        "check_in": quote.new_check_in.isoformat(),
+        "check_out": quote.new_check_out.isoformat(),
+        "number_of_guests": quote.new_number_of_guests,
+        "new_total": str(quote.new_total),
+        "exp": int(expires_at.timestamp()),
+    }
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    return f"{payload_b64}.{_sign_modification_payload(payload_b64)}", expires_at
+
+
+def _verify_modification_token(token: str, booking_id: int) -> dict:
+    """Validate a modification token; returns its payload or raises."""
+    try:
+        payload_b64, signature = token.split(".", 1)
+    except (ValueError, AttributeError) as exc:
+        raise BookingError(422, "Invalid modification token; please preview again.") from exc
+    expected = _sign_modification_payload(payload_b64)
+    if not hmac.compare_digest(signature, expected):
+        raise BookingError(422, "Invalid modification token; please preview again.")
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode("ascii")))
+    except (ValueError, TypeError) as exc:
+        raise BookingError(422, "Invalid modification token; please preview again.") from exc
+    if payload.get("booking_id") != booking_id:
+        raise BookingError(422, "Modification token does not match this booking.")
+    if int(payload.get("exp", 0)) < int(datetime.now(UTC).timestamp()):
+        raise BookingError(422, "Modification preview has expired; please preview again.")
+    return payload
+
+
+def _reconcile_pending_payments(
+    db: Session, booking: Booking, quote: ModificationQuote
+) -> None:
+    """Reconcile the booking's pending receivable with the new balance.
+
+    Payment rule (deliberately conservative):
+    - Captured and refunded rows are evidence of money that actually
+      moved; they are NEVER altered or deleted here.
+    - Pending rows are uncollected receivables managed by the system:
+      when the booking already has payment records, they are reconciled
+      so exactly one pending row remains, for the amount still due
+      (deleted entirely when nothing is due).
+    - When the booking has no payment records at all, none are created —
+      collection happens outside the agent flow, exactly as it does for
+      a freshly created booking.
+    - An overpayment is reported as ``refund_due`` (and audited) but is
+      NEVER auto-refunded: staff process the actual refund.
+    """
+    rows = db.scalars(select(Payment).where(Payment.booking_id == booking.id)).all()
+    if not rows:
+        return
+    pending = sorted((p for p in rows if p.status == "pending"), key=lambda p: p.id)
+    if quote.amount_due > 0:
+        if pending:
+            keep = pending[0]
+            keep.amount = quote.amount_due
+            for extra in pending[1:]:
+                db.delete(extra)
+        else:
+            db.add(
+                Payment(
+                    hotel_id=booking.hotel_id,
+                    booking_id=booking.id,
+                    amount=quote.amount_due,
+                    method="other",
+                    status="pending",
+                    reference="booking-modification",
+                )
+            )
+    else:
+        for row in pending:
+            db.delete(row)
+
+
+def modify_booking(
+    db: Session,
+    booking_id: int,
+    *,
+    modification_token: str,
+    today: date,
+    actor_type: str = "agent",
+    actor_id: int | None = None,
+) -> tuple[Booking, ModificationQuote]:
+    """Apply a previewed modification. Requires a valid preview token.
+
+    This is phase two of the modification flow and the only path the
+    agent may use to change a booking. Everything is re-validated at
+    apply time (eligibility, availability, capacity, pricing): if the
+    price moved since the preview, the modification fails instead of
+    silently charging a different amount.
+    """
+    booking = db.get(Booking, booking_id)
+    if booking is None:
+        raise BookingError(404, "Booking not found")
+    payload = _verify_modification_token(modification_token, booking_id)
+
+    quote = validate_modification(
+        db,
+        booking,
+        today=today,
+        new_room_id=int(payload["room_id"]),
+        new_check_in=date.fromisoformat(payload["check_in"]),
+        new_check_out=date.fromisoformat(payload["check_out"]),
+        new_number_of_guests=int(payload["number_of_guests"]),
+    )
+    if str(quote.new_total) != str(payload["new_total"]):
+        raise BookingError(
+            422,
+            "The price changed since the preview; please preview the change again.",
+        )
+
+    changes: dict[str, str] = {
+        "check_in": f"{booking.check_in.isoformat()} -> {quote.new_check_in.isoformat()}",
+        "check_out": f"{booking.check_out.isoformat()} -> {quote.new_check_out.isoformat()}",
+        "room_id": f"{booking.room_id} -> {quote.new_room_id}",
+        "number_of_guests": f"{booking.number_of_guests} -> {quote.new_number_of_guests}",
+        "final_price": f"{booking.final_price} -> {quote.new_total}",
+        "amount_due": str(quote.amount_due),
+        "refund_due": str(quote.refund_due),
+    }
+    booking.room_id = quote.new_room_id
+    booking.check_in = quote.new_check_in
+    booking.check_out = quote.new_check_out
+    booking.number_of_guests = quote.new_number_of_guests
+    booking.final_price = quote.new_total
+    db.flush()
+
+    _reconcile_pending_payments(db, booking, quote)
+
+    log_action(
+        db,
+        hotel_id=booking.hotel_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="booking.modified",
+        entity_type="booking",
+        entity_id=booking.id,
+        details=changes,
+    )
+    return booking, quote
 
 
 @dataclass

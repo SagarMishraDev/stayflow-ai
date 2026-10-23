@@ -279,3 +279,60 @@ changes), CSV exports, role gating (popularity-series hotel-scope
   revenue is check-in based — unchanged pre-existing definition.
 - `backend/analytics_demo.db` (the seeded reproduction database)
   remains as a local artifact; it is not application code.
+
+---
+
+## 5. Readability polish — 2026-10-23 (frontend-only, post-screenshot review)
+
+The owner reviewed screenshots of the live, correctness-fixed chart
+and reported that the Daily view "does not look good" and neither do
+the Monthly/Yearly views. Inspection of those screenshots showed two
+rendering problems (the underlying data and the previous correctness
+fixes — monotone interpolation, gap handling, totals — were all
+verified correct and are unchanged):
+
+- **Daily view:** the old `niceAxisMax` jumped a whole decade step —
+  a month whose biggest day was ≈₹51k got a **₹1L axis**, so every
+  point crowded into the bottom half of the plot and the (correctly
+  sparse) data read as a broken, empty chart of isolated dots.
+- **Monthly/Yearly totals view:** the four month totals were drawn
+  as floating dots positioned on the plot EDGES, and the last
+  month's axis label was literally clipped by the card edge
+  ("Oct 202…" in the screenshot).
+
+### Changes (RevenueTrendChart.tsx + format.ts only)
+
+- **`niceAxisScale()` (new, format.ts):** picks a step from the
+  1 / 2 / 2.5 / 5 × 10^n family with 3–6 intervals so the axis
+  maximum hugs the data — ₹51k → ₹60k axis (6 × ₹10k), ₹34,650 →
+  ₹40k, ₹950 → ₹1,000 — while never going below the data maximum.
+  Ticks are exact step multiples. `niceAxisMax()` now delegates to
+  it; the Hourly fallback chart uses the same scale. Verified
+  numerically against a table of representative maxima.
+- **Daily/Weekly points:** dots are now r 4, filled with the series
+  colour and ringed in white, so an isolated genuine booking day
+  reads as deliberate data instead of a stray speck; the line stays
+  2.5px and the area fill still appears only under connected
+  segments. Gaps remain gaps — nothing is connected or invented.
+- **Totals view is now a bar chart:** one vertical bar per month in
+  its fixed month colour, scaled from zero, rounded top corners,
+  compact value label above each bar, and month+year axis labels at
+  slot centres — the first and last labels now always have a
+  half-slot of room and cannot clip. Hover/tooltip behaviour is
+  unchanged (slot-based hit detection). The footnote "Each month is
+  shown as a single total." is retained.
+- **Padding:** plot top padding 16→24 (highest dot / bar value
+  labels can no longer touch the top edge) and right padding 14→20
+  (the daily "31" and weekly "Week 6" labels now sit fully inside
+  the viewBox in every mode).
+
+### Honest note
+
+The Daily view remains sparse wherever the underlying daily data is
+sparse — with revenue earned by check-in date, most days of a month
+genuinely have no check-in and are shown as gaps, by design. This
+pass only makes that truth render cleanly (tight axis, deliberate
+dots, no clipping); it does not fill, smooth or invent a single
+value. No palette, API, accounting or other-page changes; dashboard
+`build` and `build:demo` pass (tsc clean; only the pre-existing
+>500 kB chunk warning).

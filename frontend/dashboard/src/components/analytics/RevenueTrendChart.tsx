@@ -6,7 +6,7 @@ import {
   inr,
   inrShort,
   monthLabel,
-  niceAxisMax,
+  niceAxisScale,
   num,
   pctChange,
   periodLabel,
@@ -23,8 +23,11 @@ import {
  *    Monday-start week containing the 1st, matching the API's
  *    Monday-keyed buckets — whose key can fall in the previous month)
  *  - group_by "month" / "year" → each month has a single total; the
- *    chart switches to a totals view (one labelled point per month,
- *    on a month-name axis) instead of stacking four dots at one x.
+ *    chart switches to a totals view (one bar per month, on a
+ *    month-name axis) instead of stacking four dots at one x.
+ * The Y axis uses niceAxisScale: the tightest "nice" maximum that
+ * covers the data, so a sparse month is not plotted against an axis
+ * twice its height.
  * A bucket the API did not return for a month is a GAP (null): the
  * line breaks there and the tooltip says "No data" — missing data is
  * never silently plotted as ₹0. A returned bucket with revenue 0 is a
@@ -44,7 +47,10 @@ import {
 
 const W = 720;
 const H = 300;
-const PAD = { l: 58, r: 14, t: 16, b: 30 };
+/** Plot padding. Top leaves room for the highest dot (r 4 + ring)
+ * and totals-bar value labels; right keeps the last X label ("31",
+ * "Week 6", the last month name) inside the viewBox. */
+const PAD = { l: 58, r: 20, t: 24, b: 30 };
 
 export interface AlignedPoint {
   /** Raw bucket key from the series API ("2026-10-05", "2026-10", …). */
@@ -180,6 +186,15 @@ function monotonePath(pts: [number, number][]): string {
   return d;
 }
 
+/** Vertical bar path with rounded TOP corners only (the bottom sits
+ * on the axis), used by the month/year totals view. */
+function barPath(cx: number, w: number, top: number, base: number): string {
+  const x0 = cx - w / 2;
+  const x1 = cx + w / 2;
+  const r = Math.max(0, Math.min(4, w / 2, base - top));
+  return `M${x0},${base} L${x0},${top + r} Q${x0},${top} ${x0 + r},${top} L${x1 - r},${top} Q${x1},${top} ${x1},${top + r} L${x1},${base} Z`;
+}
+
 /** Split aligned points into contiguous non-null runs so gaps break
  * the line instead of being bridged or zero-filled. */
 function runs(points: (AlignedPoint | null)[]): { idx: number; point: AlignedPoint }[][] {
@@ -206,9 +221,11 @@ export function RevenueTrendChart({
 }) {
   const [hover, setHover] = useState<number | null>(null);
   /** Month/Year groupings give each month a single total: render a
-   * totals view (one point per month on a month-name axis). Stacking
+   * totals view (one bar per month on a month-name axis). Stacking
    * all four totals at one shared x (the old behaviour) read as a
-   * broken trend. */
+   * broken trend, and four floating dots at the plot edges clipped
+   * the last month's label. Bars sit at slot CENTRES, so the first
+   * and last labels always have a half-slot of room. */
   const totalsMode = bucketCount(groupBy) === 1;
   const n = totalsMode ? months.length : bucketCount(groupBy);
   const innerW = W - PAD.l - PAD.r;
@@ -217,10 +234,13 @@ export function RevenueTrendChart({
     1,
     ...months.flatMap((m) => m.points.map((p) => p?.revenue ?? 0)),
   );
-  const axisMax = niceAxisMax(max);
-  const x = (i: number) => (n > 1 ? PAD.l + (i / (n - 1)) * innerW : PAD.l + innerW / 2);
+  const scale = niceAxisScale(max);
+  const axisMax = scale.max;
+  const x = totalsMode
+    ? (i: number) => PAD.l + ((i + 0.5) / n) * innerW
+    : (i: number) => (n > 1 ? PAD.l + (i / (n - 1)) * innerW : PAD.l + innerW / 2);
   const y = (v: number) => PAD.t + innerH - (v / axisMax) * innerH;
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => axisMax * f);
+  const ticks = scale.ticks;
   const labelEvery = groupBy === "day" ? 5 : 1;
 
   const monthRuns = useMemo(
@@ -279,7 +299,10 @@ export function RevenueTrendChart({
           onMouseMove={(e) => {
             const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
             const mx = ((e.clientX - rect.left) / rect.width) * W;
-            if (n > 1) {
+            if (totalsMode) {
+              const idx = Math.floor(((mx - PAD.l) / innerW) * n);
+              setHover(Math.max(0, Math.min(n - 1, idx)));
+            } else if (n > 1) {
               const idx = Math.round(((mx - PAD.l) / innerW) * (n - 1));
               setHover(Math.max(0, Math.min(n - 1, idx)));
             } else {
@@ -323,7 +346,7 @@ export function RevenueTrendChart({
                       </>
                     ) : null}
                     {pts.map(([cx, cy], pi) => (
-                      <circle key={pi} cx={cx} cy={cy} r={3.2} fill="#fff" stroke={m.color} strokeWidth={2}>
+                      <circle key={pi} cx={cx} cy={cy} r={4} fill={m.color} stroke="#fff" strokeWidth={2}>
                         <title>{`${m.label} · ${periodLabel(run[pi].point.period, "full")}: ${inr(run[pi].point.revenue)} · ${run[pi].point.bookings} bookings`}</title>
                       </circle>
                     ))}
@@ -337,15 +360,19 @@ export function RevenueTrendChart({
               const p = m.points[0];
               if (!p) return null;
               const cx = x(mi);
-              const cy = y(p.revenue);
+              const top = y(p.revenue);
+              const base = PAD.t + innerH;
+              const barW = Math.min(96, innerW / Math.max(1, n) / 2);
               return (
                 <g key={m.key}>
-                  <circle cx={cx} cy={cy} r={5} fill="#fff" stroke={m.color} strokeWidth={2.5}>
-                    <title>{`${m.label}: ${inr(p.revenue)} · ${p.bookings} bookings`}</title>
-                  </circle>
+                  {p.revenue > 0 ? (
+                    <path d={barPath(cx, barW, top, base)} fill={m.color}>
+                      <title>{`${m.label}: ${inr(p.revenue)} · ${p.bookings} bookings`}</title>
+                    </path>
+                  ) : null}
                   <text
                     x={cx}
-                    y={cy - 12}
+                    y={top - 8}
                     textAnchor="middle"
                     className="fill-[#102A43] text-[12px] font-semibold tabular-nums"
                   >
@@ -450,10 +477,11 @@ export function HourlyTrendChart({ points }: { points: SeriesPoint[] }) {
   const n = points.length;
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
-  const axisMax = niceAxisMax(Math.max(1, ...points.map((p) => num(p.revenue))));
+  const scale = niceAxisScale(Math.max(1, ...points.map((p) => num(p.revenue))));
+  const axisMax = scale.max;
   const x = (i: number) => (n > 1 ? PAD.l + (i / (n - 1)) * innerW : PAD.l + innerW / 2);
   const y = (v: number) => PAD.t + innerH - (v / axisMax) * innerH;
-  const ticks = [0, 0.5, 1].map((f) => axisMax * f);
+  const ticks = scale.ticks;
   const pts = points.map((p, i): [number, number] => [x(i), y(num(p.revenue))]);
   const hoverPoint = hover !== null ? points[hover] : undefined;
 

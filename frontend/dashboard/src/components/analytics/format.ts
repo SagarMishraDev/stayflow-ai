@@ -28,16 +28,45 @@ function trimZero(s: string): string {
   return s.endsWith(".0") ? s.slice(0, -2) : s;
 }
 
-/** Smallest "nice" axis maximum (1 / 2 / 2.5 / 5 / 10 × 10^n) that
- * covers `v`, so chart Y axes tick on readable values (₹26k, ₹34.6k…)
- * instead of the raw data maximum, and the top series point sits just
- * inside the plot instead of on its edge. */
+/** "Nice" Y-axis scale for a data maximum `v`: a step from the
+ * 1 / 2 / 2.5 / 5 × 10^n family with 3–6 intervals, chosen so the
+ * axis maximum (step × intervals) HUGS the data instead of jumping a
+ * whole decade step — a ₹51k daily maximum used to get a ₹1L axis,
+ * leaving the top half of the plot permanently empty; it now gets a
+ * ₹60k axis (6 × ₹10k). The axis maximum is never below `v`, and
+ * ticks land exactly on step multiples (₹26k, ₹34.6k…). */
+export function niceAxisScale(v: number): { max: number; step: number; ticks: number[] } {
+  if (!(v > 0) || !Number.isFinite(v)) {
+    return { max: 1, step: 0.25, ticks: [0, 0.25, 0.5, 0.75, 1] };
+  }
+  const decade = Math.floor(Math.log10(v));
+  let best: { max: number; step: number; intervals: number } | null = null;
+  for (let p = decade - 1; p <= decade + 1; p++) {
+    for (const mult of [1, 2, 2.5, 5]) {
+      const step = mult * Math.pow(10, p);
+      const intervals = Math.ceil(v / step - 1e-9);
+      if (intervals < 3 || intervals > 6) continue;
+      const max = step * intervals;
+      // Tightest axis wins; on a tie prefer the finer step (more
+      // gridlines read better than fewer, coarser ones).
+      if (!best || max < best.max || (max === best.max && intervals > best.intervals)) {
+        best = { max, step, intervals };
+      }
+    }
+  }
+  if (!best) {
+    // Unreachable for finite v > 0 (some family step always lands in
+    // 3–6 intervals), but never return an axis below the data.
+    const max = Math.pow(10, Math.ceil(Math.log10(v)));
+    return { max, step: max / 4, ticks: [0, max / 4, max / 2, (3 * max) / 4, max] };
+  }
+  const ticks = Array.from({ length: best.intervals + 1 }, (_, i) => best.step * i);
+  return { max: best.max, step: best.step, ticks };
+}
+
+/** Smallest "nice" axis maximum covering `v` (see niceAxisScale). */
 export function niceAxisMax(v: number): number {
-  if (!(v > 0) || !Number.isFinite(v)) return 1;
-  const pow = Math.pow(10, Math.floor(Math.log10(v)));
-  const unit = v / pow;
-  const nice = unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10;
-  return nice * pow;
+  return niceAxisScale(v).max;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

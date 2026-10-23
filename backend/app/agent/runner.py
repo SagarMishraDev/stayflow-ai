@@ -23,8 +23,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,6 +39,7 @@ from app.agent.language import (
 )
 from app.agent.prompts import build_system_prompt
 from app.agent.providers.base import LLMResponse, ProviderContext, ProviderError
+from app.agent.relative_dates import resolve_relative_stay
 from app.agent.tools.registry import ToolContext, ToolRegistry, build_registry
 from app.models.guest import Guest
 from app.models.hotel import Hotel
@@ -139,15 +141,46 @@ def _provider_context(
         guest = db.get(Guest, guest_id)
         if guest is not None and guest.hotel_id == hotel_id:
             guest_name = guest.name
+    # "Today" is the hotel-local date: a guest chatting near midnight
+    # must get weekend/tomorrow resolution against the hotel's clock,
+    # not the server's.
+    tz_name = hotel.timezone or "Asia/Kolkata"
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = ZoneInfo("Asia/Kolkata")
+        tz_name = "Asia/Kolkata"
     return ProviderContext(
         hotel_id=hotel_id,
         hotel_name=hotel.name,
         currency=hotel.currency or "INR",
-        today=date.today().isoformat(),
+        today=datetime.now(tz).date().isoformat(),
+        timezone=tz_name,
         room_types=[{"id": r.id, "room_type": r.room_type, "capacity": r.capacity} for r in rooms],
         guest_id=guest_id,
         guest_name=guest_name,
         response_language=response_language,
+    )
+
+
+def _date_resolution_note(message: str, today: date) -> str:
+    """Deterministic relative-date resolution for the system prompt.
+
+    When the guest's message carries a relative phrase ("next weekend",
+    "kal", "agle Shukravar"), the resolver — not the LLM — computes the
+    exact dates against the hotel-local today, and the note pins them
+    for this turn so every provider resolves the phrase identically.
+    """
+    stay = resolve_relative_stay(message, today)
+    if stay is None:
+        return ""
+    return (
+        "\n\nDETERMINISTIC DATE RESOLUTION for the guest's latest message: "
+        f"the relative date phrase resolves to check-in {stay.check_in.isoformat()} "
+        f"({stay.words().split(' to ')[0]}) and check-out "
+        f"{stay.check_out.isoformat()} ({stay.words().split(' to ')[1]}). "
+        "Use these exact dates (pass them to tools as ISO dates) and restate "
+        "them to the guest in words before asking for confirmation."
     )
 
 
@@ -265,6 +298,7 @@ def run_chat(
         {
             "role": "system",
             "content": build_system_prompt(provider_context)
+            + _date_resolution_note(text, date.fromisoformat(provider_context.today))
             + "\n\n"
             + build_language_instruction(response_language),
         }

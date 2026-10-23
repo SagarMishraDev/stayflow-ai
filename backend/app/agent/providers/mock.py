@@ -26,6 +26,7 @@ from app.agent.providers.base import (
     ProviderContext,
     ToolCallRequest,
 )
+from app.agent.relative_dates import RelativeStay, resolve_relative_stay
 
 _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 # Day-first numeric dates (Indian locale): 23/11/2026, 23-11-2026, 23.11.2026
@@ -254,12 +255,239 @@ _STRINGS: dict[str, dict[ResponseLanguage, str]] = {
             "bilkul theek hai.)"
         ),
     },
+    "modify_ask_contact": {
+        ResponseLanguage.ENGLISH: (
+            "I can help you change your booking. To find it, please share "
+            "the name and the phone number or email used for the booking."
+        ),
+        ResponseLanguage.HINDI: (
+            "मैं आपकी बुकिंग बदलने में मदद कर सकता हूँ। बुकिंग खोजने के लिए "
+            "कृपया बुकिंग में दिया गया नाम और फ़ोन नंबर या ईमेल बताइए।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Main aapki booking change karne mein help kar sakta hoon. "
+            "Booking dhoondhne ke liye please booking mein diya gaya naam "
+            "aur phone number ya email bata dijiye."
+        ),
+    },
+    "modify_none": {
+        ResponseLanguage.ENGLISH: (
+            "I couldn't find any current or upcoming bookings under your "
+            "details. If you booked with a different name or number, "
+            "please share those details."
+        ),
+        ResponseLanguage.HINDI: (
+            "आपके विवरण से कोई मौजूदा या आने वाली बुकिंग नहीं मिली। अगर "
+            "बुकिंग किसी दूसरे नाम या नंबर से है, तो कृपया वे विवरण बताइए।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Aapke details se koi current ya upcoming booking nahi mili. "
+            "Agar booking kisi dusre naam ya number se hai, to please woh "
+            "details bata dijiye."
+        ),
+    },
+    "modify_ask_change": {
+        ResponseLanguage.ENGLISH: (
+            "For booking {booking_id} ({room_type}, {check_in} to "
+            "{check_out}) — what would you like to change: the dates, "
+            "the room type, or the number of guests?"
+        ),
+        ResponseLanguage.HINDI: (
+            "बुकिंग {booking_id} ({room_type}, {check_in} से {check_out}) के "
+            "लिए — आप क्या बदलना चाहेंगे: तारीख़ें, कमरे का प्रकार, या "
+            "मेहमानों की संख्या?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Booking {booking_id} ({room_type}, {check_in} se {check_out}) "
+            "ke liye — aap kya change karna chahenge: dates, room type, "
+            "ya guests ki sankhya?"
+        ),
+    },
+    "modify_ineligible": {
+        ResponseLanguage.ENGLISH: (
+            "Booking {booking_id} can't be changed online because "
+            "{reason}. Please contact reception and they'll be happy to "
+            "help with this booking."
+        ),
+        ResponseLanguage.HINDI: (
+            "बुकिंग {booking_id} ऑनलाइन नहीं बदली जा सकती क्योंकि {reason}। "
+            "कृपया रिसेप्शन से संपर्क कीजिए, वे इस बुकिंग में आपकी मदद करेंगे।"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Booking {booking_id} online change nahi ho sakti kyunki "
+            "{reason}. Please reception se contact kijiye, woh is booking "
+            "mein aapki help kar denge."
+        ),
+    },
+    "modify_reason_cancelled": {
+        ResponseLanguage.ENGLISH: "it has been cancelled",
+        ResponseLanguage.HINDI: "यह रद्द हो चुकी है",
+        ResponseLanguage.HINGLISH: "ye cancel ho chuki hai",
+    },
+    "modify_reason_check_in_passed": {
+        ResponseLanguage.ENGLISH: (
+            "its check-in date has already arrived or passed — changes "
+            "are only possible before the check-in day"
+        ),
+        ResponseLanguage.HINDI: (
+            "इसकी चेक-इन तारीख़ आ चुकी है या निकल चुकी है — बदलाव केवल "
+            "चेक-इन के दिन से पहले संभव है"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "iski check-in date aa chuki hai ya nikal chuki hai — changes "
+            "sirf check-in ke din se pehle possible hain"
+        ),
+    },
+    "modify_reason_status": {
+        ResponseLanguage.ENGLISH: "it is already checked in or completed",
+        ResponseLanguage.HINDI: "इसमें चेक-इन हो चुका है या यह पूरी हो चुकी है",
+        ResponseLanguage.HINGLISH: "ismein check-in ho chuka hai ya ye complete ho chuki hai",
+    },
+    "modify_failed": {
+        ResponseLanguage.ENGLISH: (
+            "I wasn't able to prepare that change. Could you tell me "
+            "again what you'd like to change?"
+        ),
+        ResponseLanguage.HINDI: (
+            "माफ़ कीजिए, मैं यह बदलाव तैयार नहीं कर पाया। क्या आप फिर से "
+            "बता सकते हैं कि आप क्या बदलना चाहते हैं?"
+        ),
+        ResponseLanguage.HINGLISH: (
+            "Sorry, main ye change prepare nahi kar paya. Kya aap phir "
+            "se bata sakte hain ki aap kya change karna chahte hain?"
+        ),
+    },
 }
 
 
 def _t(lang: ResponseLanguage, key: str, **fmt: Any) -> str:
     template = _STRINGS[key][lang]
     return template.format(**fmt) if fmt else template
+
+
+def _ineligible_reason_text(reason: str | None, lang: ResponseLanguage) -> str:
+    key = {
+        "cancelled": "modify_reason_cancelled",
+        "check_in_passed": "modify_reason_check_in_passed",
+        "status_not_modifiable": "modify_reason_status",
+    }.get(reason or "", "modify_reason_status")
+    return _STRINGS[key][lang]
+
+
+def _render_my_bookings(data: dict[str, Any], lang: ResponseLanguage) -> str:
+    """Render a get_my_bookings result: the list plus what to do next."""
+    bookings = data.get("bookings", [])
+    if not bookings:
+        return _t(lang, "modify_none")
+    lines = []
+    for b in bookings:
+        line = (
+            f"- Booking {b.get('booking_id')}: {b.get('room_type')}, "
+            f"{b.get('check_in')} to {b.get('check_out')}, "
+            f"{b.get('number_of_guests')} guests, {b.get('booking_status')}, "
+            f"total {b.get('final_price')}"
+        )
+        if b.get("modifiable"):
+            if lang is ResponseLanguage.HINDI:
+                line += " — बदली जा सकती है"
+            elif lang is ResponseLanguage.HINGLISH:
+                line += " — change ho sakti hai"
+            else:
+                line += " — can be modified"
+        else:
+            reason = _ineligible_reason_text(b.get("ineligible_reason"), lang)
+            if lang is ResponseLanguage.HINDI:
+                line += f" — बदली नहीं जा सकती ({reason})"
+            elif lang is ResponseLanguage.HINGLISH:
+                line += f" — change nahi ho sakti ({reason})"
+            else:
+                line += f" — cannot be modified ({reason})"
+        lines.append(line)
+    if lang is ResponseLanguage.HINDI:
+        header = "आपकी बुकिंग्स:"
+        footer = (
+            "आप किस बुकिंग को बदलना चाहेंगे, और क्या बदलना है — "
+            "तारीख़ें, कमरे का प्रकार, या मेहमानों की संख्या?"
+        )
+    elif lang is ResponseLanguage.HINGLISH:
+        header = "Aapki bookings:"
+        footer = (
+            "Aap kaunsi booking change karna chahenge, aur kya change "
+            "karna hai — dates, room type, ya guests ki sankhya?"
+        )
+    else:
+        header = "Here are your bookings:"
+        footer = (
+            "Which booking would you like to change, and what should I "
+            "change — the dates, the room type, or the number of guests?"
+        )
+    return "\n".join([header, *lines, footer])
+
+
+def _modification_summary_text(data: dict[str, Any], lang: ResponseLanguage) -> str:
+    """Render a modification preview/applied summary (old vs new)."""
+    old, new = data.get("old", {}), data.get("new", {})
+    currency = data.get("currency", "")
+    due = str(data.get("amount_due", "0.00"))
+    refund = str(data.get("refund_due", "0.00"))
+    applied = "booking_status" in data
+    if lang is ResponseLanguage.HINDI:
+        lines = [
+            "आपकी बुकिंग में बदलाव " + ("हो गया है:" if applied else "का सारांश:"),
+            f"- कमरा: {old.get('room_type')} → {new.get('room_type')}",
+            f"- चेक-इन: {old.get('check_in')} → {new.get('check_in')}",
+            f"- चेक-आउट: {old.get('check_out')} → {new.get('check_out')}",
+            f"- मेहमान: {old.get('number_of_guests')} → {new.get('number_of_guests')}",
+            f"- कुल कीमत: {old.get('total_price')} {currency} → "
+            f"{new.get('total_price')} {currency} (अंतर {data.get('difference')})",
+        ]
+        if due not in ("0", "0.00"):
+            lines.append(f"- बकाया राशि: {due} {currency}")
+        if refund not in ("0", "0.00"):
+            lines.append(
+                f"- रिफ़ंड देय: {refund} {currency} — हमारी टीम इसे प्रोसेस करेगी।"
+            )
+        if not applied:
+            lines.append("क्या मैं यह बदलाव लागू कर दूँ?")
+        return "\n".join(lines)
+    if lang is ResponseLanguage.HINGLISH:
+        lines = [
+            "Aapki booking mein change "
+            + ("ho gaya hai:" if applied else "ka summary:"),
+            f"- Room: {old.get('room_type')} → {new.get('room_type')}",
+            f"- Check-in: {old.get('check_in')} → {new.get('check_in')}",
+            f"- Check-out: {old.get('check_out')} → {new.get('check_out')}",
+            f"- Guests: {old.get('number_of_guests')} → {new.get('number_of_guests')}",
+            f"- Total price: {old.get('total_price')} {currency} → "
+            f"{new.get('total_price')} {currency} (difference {data.get('difference')})",
+        ]
+        if due not in ("0", "0.00"):
+            lines.append(f"- Bakaya rashi (amount due): {due} {currency}")
+        if refund not in ("0", "0.00"):
+            lines.append(
+                f"- Refund due: {refund} {currency} — hamari team isse process karegi."
+            )
+        if not applied:
+            lines.append("Kya main ye change apply kar doon?")
+        return "\n".join(lines)
+    lines = [
+        "Your booking has been updated:" if applied else "Here's the change summary:",
+        f"- Room: {old.get('room_type')} → {new.get('room_type')}",
+        f"- Check-in: {old.get('check_in')} → {new.get('check_in')}",
+        f"- Check-out: {old.get('check_out')} → {new.get('check_out')}",
+        f"- Guests: {old.get('number_of_guests')} → {new.get('number_of_guests')}",
+        f"- Total price: {old.get('total_price')} {currency} → "
+        f"{new.get('total_price')} {currency} (difference {data.get('difference')})",
+    ]
+    if due not in ("0", "0.00"):
+        lines.append(f"- Amount still due: {due} {currency}")
+    if refund not in ("0", "0.00"):
+        lines.append(
+            f"- Refund due: {refund} {currency} — our team will process it for you."
+        )
+    if not applied:
+        lines.append("Would you like me to apply this change?")
+    return "\n".join(lines)
 
 
 def _summarize(
@@ -464,6 +692,10 @@ def _summarize(
             f"{data.get('check_in')} to {data.get('check_out')}, "
             f"status {data.get('booking_status')}, total {data.get('final_price')}."
         )
+    if tool_name == "get_my_bookings":
+        return _render_my_bookings(data, lang)
+    if tool_name in ("preview_booking_modification", "modify_booking"):
+        return _modification_summary_text(data, lang)
     if tool_name == "create_food_order":
         items = data.get("items", [])
         item_lines = ", ".join(f"{i.get('name')} × {i.get('quantity')}" for i in items)
@@ -509,15 +741,18 @@ def _make_date(year: int, month: int, day: int) -> date | None:
         return None
 
 
-def _extract_dates(text: str) -> list[date]:
+def _extract_dates(text: str, today: date | None = None) -> list[date]:
     """All real calendar dates mentioned in `text`, in mention order.
 
     Supports ISO (2026-11-23), day-first numeric (23/11/2026, 23-11-2026,
     23.11.2026), month names (23 Nov 2026 / Nov 23, 2026), and the relative
     words today / tomorrow. Invalid dates (e.g. 31/02/2026) are skipped.
     Each matched span is blanked out before the next pattern runs so one
-    date is never counted twice in two different formats.
+    date is never counted twice in two different formats. ``today`` is
+    the hotel-local current date (defaults to the server date).
     """
+    if today is None:
+        today = date.today()
     found: list[date] = []
     work = text
     for match in _DATE_RE.finditer(work):
@@ -548,14 +783,46 @@ def _extract_dates(text: str) -> list[date]:
             found.append(parsed)
     lowered = text.lower()
     if "tomorrow" in lowered:
-        parsed = date.today() + timedelta(days=1)
+        parsed = today + timedelta(days=1)
         if parsed not in found:
             found.append(parsed)
     if "today" in lowered:
-        parsed = date.today()
+        parsed = today
         if parsed not in found:
             found.append(parsed)
     return found
+
+
+def _context_today(context: ProviderContext) -> date:
+    """Hotel-local today, as computed by the runner into the context."""
+    try:
+        return date.fromisoformat(context.today)
+    except (ValueError, TypeError):
+        return date.today()
+
+
+_EXPLICIT_DATE_RES = (_DATE_RE, _DMY_DATE_RE, _MONTH_NAME_DATE_RE, _MONTH_FIRST_DATE_RE)
+
+
+def _has_explicit_dates(text: str) -> bool:
+    """True when the text carries a concrete calendar date in any format."""
+    return any(pattern.search(text) for pattern in _EXPLICIT_DATE_RES)
+
+
+def _stay_dates(text: str, today: date) -> tuple[list[date], RelativeStay | None]:
+    """Stay dates for one message: explicit dates win, else relative phrases.
+
+    A relative phrase ("next weekend", "kal", "agle Shukravar") resolves
+    deterministically via :mod:`app.agent.relative_dates` to a complete
+    (check-in, check-out) pair; the stay is returned alongside so the
+    caller can restate the resolved dates to the guest in words.
+    """
+    if _has_explicit_dates(text):
+        return _extract_dates(text, today), None
+    stay = resolve_relative_stay(text, today)
+    if stay is not None:
+        return [stay.check_in, stay.check_out], stay
+    return _extract_dates(text, today), None
 
 
 def _strip_date_mentions(text: str) -> str:
@@ -585,18 +852,26 @@ def _contact_args(text: str, hotel_id: int) -> dict[str, Any] | None:
 
 
 def _gather_booking_slots(
-    messages: list[dict[str, Any]], room_types: list[dict[str, Any]]
-) -> tuple[dict[str, Any] | None, list[date], int | None]:
+    messages: list[dict[str, Any]],
+    room_types: list[dict[str, Any]],
+    today: date | None = None,
+) -> tuple[dict[str, Any] | None, list[date], int | None, RelativeStay | None]:
     """Collect booking slots from ALL guest messages (oldest first).
 
     Slot carryover: a room named two turns ago plus dates given now (or
     vice versa) must complete the booking. The most recent mention wins
     for room and guest count; dates accumulate in mention order,
-    de-duplicated (first = check-in, second = check-out).
+    de-duplicated (first = check-in, second = check-out). A relative
+    phrase ("next weekend") supplies the whole stay atomically and is
+    returned so the resolved dates can be restated to the guest; later
+    explicit dates supersede it.
     """
+    if today is None:
+        today = date.today()
     room: dict[str, Any] | None = None
     dates: list[date] = []
     guests: int | None = None
+    relative: RelativeStay | None = None
     for msg in messages:
         if msg.get("role") != "user":
             continue
@@ -604,13 +879,24 @@ def _gather_booking_slots(
         matched = _match_room_type(text, room_types)
         if matched is not None:
             room = matched
-        for parsed in _extract_dates(text):
-            if parsed not in dates:
-                dates.append(parsed)
+        stay_dates, stay = _stay_dates(text, today)
+        if stay is not None:
+            dates = [stay.check_in, stay.check_out]
+            relative = stay
+        else:
+            for parsed in stay_dates:
+                if parsed not in dates:
+                    dates.append(parsed)
+            if _has_explicit_dates(text):
+                relative = None
         guests_match = _GUESTS_RE.search(text)
         if guests_match:
             guests = int(guests_match.group(1))
-    return room, dates, guests
+    if relative is not None and (
+        len(dates) < 2 or dates[0] != relative.check_in or dates[1] != relative.check_out
+    ):
+        relative = None
+    return room, dates, guests, relative
 
 
 def _match_room_type(text: str, room_types: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -619,6 +905,70 @@ def _match_room_type(text: str, room_types: list[dict[str, Any]]) -> dict[str, A
         name = str(room.get("room_type", ""))
         if name and name.lower() in lowered:
             return room
+    return None
+
+
+def _parse_tool_content(content: str) -> dict[str, Any] | None:
+    """Parse a tool-result message body the way the router's helpers do."""
+    if content.startswith("ERROR:"):
+        return {}
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _modify_intent(text: str) -> bool:
+    """True when the guest is asking to change an existing booking."""
+    lowered = text.lower()
+    if re.search(r"\b(modify|reschedule)\b", lowered):
+        return True
+    if "booking" in lowered and any(
+        w in lowered for w in ("change", "shift", "move", "update", "badal")
+    ):
+        return True
+    if ("change" in lowered or "badal" in lowered) and (
+        "date" in lowered or "room" in lowered
+    ):
+        return True
+    return "बदल" in text and ("बुकिंग" in text or "booking" in lowered)
+
+
+def _relative_date_prefix(
+    messages: list[dict[str, Any]],
+    context: ProviderContext,
+    tool_name: str,
+    data: dict[str, Any],
+) -> str | None:
+    """Restate an interpreted relative date in words before a summary.
+
+    When a booking preview (or modification preview) was produced from
+    a relative phrase, the resolved dates are stated explicitly —
+    e.g. "Next weekend — Saturday 31 October 2026 to Sunday
+    1 November 2026" — so the guest can correct them before confirming.
+    An interpreted date is never booked silently.
+    """
+    today = _context_today(context)
+    if tool_name == "preview_booking":
+        _room, _dates, _guests, relative = _gather_booking_slots(
+            messages, context.room_types, today
+        )
+        if relative is None:
+            return None
+        return f"{relative.label} — {relative.words()}."
+    if tool_name == "preview_booking_modification":
+        new = data.get("new", {})
+        for msg in messages:
+            if msg.get("role") != "user":
+                continue
+            stay = resolve_relative_stay(str(msg.get("content", "")), today)
+            if (
+                stay is not None
+                and stay.check_in.isoformat() == new.get("check_in")
+                and stay.check_out.isoformat() == new.get("check_out")
+            ):
+                return f"{stay.label} — {stay.words()}."
     return None
 
 
@@ -666,7 +1016,7 @@ class MockProvider:
         lang = _lang(context)
         # If we already called tools for the latest user message, summarize
         # the newest tool result instead of calling again (prevents loops).
-        summary = self._summarize_latest_tool_result(messages, lang)
+        summary = self._summarize_latest_tool_result(messages, lang, context)
         if summary is not None:
             return LLMResponse(content=summary)
 
@@ -677,15 +1027,32 @@ class MockProvider:
                 break
         lowered = user_text.lower()
         room = _match_room_type(user_text, context.room_types)
-        dates = _extract_dates(user_text)
+        today = _context_today(context)
+        dates, _current_stay = _stay_dates(user_text, today)
 
-        # 1. Confirmation of a pending booking draft: the guest said yes after
-        # preview_booking summarized the draft, so confirm it via create_booking.
-        # The preview may live in an earlier turn's history, so search the
-        # whole conversation — not just tools that ran after the latest message.
+        # 1. Confirmation of a pending preview: the guest said yes after a
+        # booking draft (preview_booking) or a modification preview
+        # (preview_booking_modification) was summarized, so apply it via
+        # create_booking / modify_booking. The newest unconsumed preview
+        # wins; both mutations re-validate everything server-side.
         if _CONFIRM_RE.search(lowered):
-            preview = self._latest_tool_result(messages, "preview_booking")
-            if preview is not None:
+            kind, preview = self._latest_pending_preview(messages)
+            if kind == "modify" and preview is not None:
+                if preview.get("modification_token"):
+                    return LLMResponse(
+                        tool_calls=[
+                            ToolCallRequest(
+                                name="modify_booking",
+                                arguments={
+                                    "hotel_id": context.hotel_id,
+                                    "booking_id": preview["booking_id"],
+                                    "modification_token": preview["modification_token"],
+                                },
+                            )
+                        ]
+                    )
+                return LLMResponse(content=_t(lang, "modify_failed"))
+            if kind == "booking" and preview is not None:
                 if preview.get("draft_id"):
                     return LLMResponse(
                         tool_calls=[
@@ -707,6 +1074,7 @@ class MockProvider:
             and guest_result.get("guest_id")
             and any(w in lowered for w in ("book", "reserve", "reservation"))
             and not self._last_tool_call(messages, "preview_booking")
+            and self._modify_flow_start(messages) is None
         ):
             guests_match = _GUESTS_RE.search(user_text)
             guests = int(guests_match.group(1)) if guests_match else 2
@@ -754,6 +1122,15 @@ class MockProvider:
         if order_response is not None:
             return order_response
 
+        # 2c. Booking modification flow: identify the guest, list their
+        # bookings, collect the requested changes as slots, preview the
+        # change (old vs new + price difference) and only apply it after
+        # the step-1 confirmation above. Mirrors the food-order slot
+        # flow's determinism: no change is ever applied silently.
+        modify_response = self._route_modify(messages, context, lang)
+        if modify_response is not None:
+            return modify_response
+
         # 2b. Pending-booking slot replies: a booking is in progress and
         # this short reply carries slot info (a date, a room, a guest
         # count, or contact details). Complete the slots from the whole
@@ -785,7 +1162,9 @@ class MockProvider:
                 or _contact_args(user_text, context.hotel_id) is not None
             )
             if slot_now:
-                g_room, g_dates, g_guests = _gather_booking_slots(messages, context.room_types)
+                g_room, g_dates, g_guests, _rel = _gather_booking_slots(
+                    messages, context.room_types, today
+                )
                 if g_room is not None and len(g_dates) >= 2:
                     return self._continue_booking(
                         room=g_room,
@@ -1030,9 +1409,9 @@ class MockProvider:
         return qty
 
     @classmethod
-    def _parse_timing(cls, text: str) -> str | None:
+    def _parse_timing(cls, text: str, today: date | None = None) -> str | None:
         lowered = text.lower()
-        dates = _extract_dates(text)
+        dates = _extract_dates(text, today)
         if dates:
             return dates[0].isoformat()
         if cls._TIME_RE.search(text):
@@ -1072,7 +1451,7 @@ class MockProvider:
             if name.lower() in combined.lower():
                 matched_item = name
         qty = self._parse_quantity(combined)
-        timing = self._parse_timing(combined)
+        timing = self._parse_timing(combined, _context_today(context))
 
         if matched_item is None and qty is None and timing is None and not intent:
             return None  # not an order conversation; let other routes run
@@ -1115,6 +1494,286 @@ class MockProvider:
                     },
                 )
             ]
+        )
+
+    # ------------------------------------------------------------------ #
+    # booking modification slot flow                                      #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _modify_flow_start(messages: list[dict[str, Any]]) -> int | None:
+        """Index of the guest message that opened the current modify flow.
+
+        A flow opens on a modify-intent message and closes when a
+        booking mutation completes (create/modify) or a new booking is
+        previewed — a fresh topic supersedes an unfinished change.
+        """
+        start: int | None = None
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "user" and _modify_intent(str(msg.get("content", ""))):
+                if start is None:
+                    start = i
+            elif msg.get("role") == "tool" and msg.get("name") in (
+                "create_booking",
+                "modify_booking",
+                "preview_booking",
+            ):
+                start = None
+        return start
+
+    @staticmethod
+    def _latest_pending_preview(
+        messages: list[dict[str, Any]],
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Newest unconsumed preview: ("booking" | "modify", result).
+
+        A preview is consumed once its mutation tool has run after it,
+        so a stray later "yes" can never re-apply an old change.
+        """
+        pending: tuple[str, dict[str, Any]] | None = None
+        for msg in messages:
+            if msg.get("role") != "tool":
+                continue
+            name = msg.get("name")
+            if name in ("preview_booking", "preview_booking_modification"):
+                data = _parse_tool_content(str(msg.get("content", "")))
+                if data is not None:
+                    pending = (
+                        "booking" if name == "preview_booking" else "modify",
+                        data,
+                    )
+            elif name in ("create_booking", "modify_booking"):
+                pending = None
+        if pending is None:
+            return None, None
+        return pending
+
+    @staticmethod
+    def _gather_modify_changes(
+        messages: list[dict[str, Any]],
+        flow_start: int,
+        target: dict[str, Any],
+        context: ProviderContext,
+        today: date,
+    ) -> dict[str, Any]:
+        """Collect the requested changes from the flow's guest messages.
+
+        Latest mention wins. Dates may be explicit or a relative phrase
+        (resolved deterministically); a single new check-in date keeps
+        the original stay length. Only values that differ from the
+        current booking count as changes.
+        """
+        changes: dict[str, Any] = {}
+        nights = (
+            date.fromisoformat(target["check_out"]) - date.fromisoformat(target["check_in"])
+        ).days
+        current_room_id = next(
+            (r["id"] for r in context.room_types if r["room_type"] == target["room_type"]),
+            None,
+        )
+        for msg in messages[flow_start:]:
+            if msg.get("role") != "user":
+                continue
+            text = str(msg.get("content", ""))
+            _dates, stay = _stay_dates(text, today)
+            explicit = _extract_dates(text, today) if _has_explicit_dates(text) else []
+            if stay is not None:
+                changes["new_check_in"] = stay.check_in.isoformat()
+                changes["new_check_out"] = stay.check_out.isoformat()
+            elif len(explicit) >= 2:
+                changes["new_check_in"] = explicit[0].isoformat()
+                changes["new_check_out"] = explicit[1].isoformat()
+            elif len(explicit) == 1:
+                check_in = explicit[0]
+                changes["new_check_in"] = check_in.isoformat()
+                changes["new_check_out"] = (check_in + timedelta(days=nights)).isoformat()
+            room = _match_room_type(text, context.room_types)
+            if room is not None and room["id"] != current_room_id:
+                changes["new_room_id"] = room["id"]
+            guests_match = _GUESTS_RE.search(text)
+            if guests_match and int(guests_match.group(1)) != target["number_of_guests"]:
+                changes["new_number_of_guests"] = int(guests_match.group(1))
+        if (
+            changes.get("new_check_in") == target["check_in"]
+            and changes.get("new_check_out") == target["check_out"]
+        ):
+            changes.pop("new_check_in", None)
+            changes.pop("new_check_out", None)
+        return changes
+
+    @staticmethod
+    def _same_modify_args(call_args: dict[str, Any], args: dict[str, Any]) -> bool:
+        keys = (
+            "booking_id",
+            "new_room_id",
+            "new_check_in",
+            "new_check_out",
+            "new_number_of_guests",
+        )
+        return all(call_args.get(k) == args.get(k) for k in keys)
+
+    def _route_modify(
+        self,
+        messages: list[dict[str, Any]],
+        context: ProviderContext,
+        lang: ResponseLanguage,
+    ) -> LLMResponse | None:
+        """Deterministic modify-an-upcoming-booking flow.
+
+        Identify the guest -> list their bookings (get_my_bookings) ->
+        pick the target -> collect change slots -> preview the change
+        (preview_booking_modification) -> step 1 applies it after the
+        guest confirms. Eligibility, availability and pricing are all
+        enforced server-side; this router only gathers slots.
+        """
+        flow_start = self._modify_flow_start(messages)
+        if flow_start is None:
+            return None
+        today = _context_today(context)
+        user_texts = [str(m.get("content", "")) for m in messages if m.get("role") == "user"]
+        latest = user_texts[-1] if user_texts else ""
+        lowered = latest.lower()
+
+        # A clear question about something else (prices, policies, the
+        # menu) leaves the flow; it can be re-entered at any time.
+        slot_signal = (
+            bool(_stay_dates(latest, today)[0])
+            or _match_room_type(latest, context.room_types) is not None
+            or _GUESTS_RE.search(latest) is not None
+            or _BOOKING_ID_RE.search(latest) is not None
+        )
+        if not _modify_intent(latest) and not slot_signal and any(
+            w in lowered
+            for w in (
+                "price",
+                "rate",
+                "cost",
+                "how much",
+                "availab",
+                "polic",
+                "menu",
+                "food",
+                "offer",
+                "service",
+            )
+        ):
+            return None
+
+        # 1. The guest must be identified before their bookings can be
+        # listed — same identity pattern as the booking flow.
+        guest_id = context.guest_id
+        if not guest_id:
+            found = self._latest_tool_result(messages, "find_or_create_guest")
+            if found and found.get("guest_id"):
+                guest_id = found["guest_id"]
+        if not guest_id:
+            guest_args = None
+            for past in reversed(user_texts):
+                guest_args = _contact_args(past, context.hotel_id)
+                if guest_args is not None:
+                    break
+            if guest_args is not None:
+                return LLMResponse(
+                    tool_calls=[ToolCallRequest(name="find_or_create_guest", arguments=guest_args)]
+                )
+            return LLMResponse(content=_t(lang, "modify_ask_contact"))
+
+        # 2. Fetch this flow's booking list (once per flow and guest).
+        bookings_data: dict[str, Any] | None = None
+        for i, msg in enumerate(messages):
+            if (
+                i > flow_start
+                and msg.get("role") == "tool"
+                and msg.get("name") == "get_my_bookings"
+            ):
+                parsed = _parse_tool_content(str(msg.get("content", "")))
+                if parsed and parsed.get("guest_id") == guest_id:
+                    bookings_data = parsed
+        if bookings_data is None:
+            return LLMResponse(
+                tool_calls=[
+                    ToolCallRequest(
+                        name="get_my_bookings",
+                        arguments={"hotel_id": context.hotel_id, "guest_id": guest_id},
+                    )
+                ]
+            )
+        bookings = bookings_data.get("bookings", [])
+        if not bookings:
+            return LLMResponse(content=_t(lang, "modify_none"))
+
+        # 3. Pick the target booking: explicit id, room-type mention,
+        # the only booking, or the only modifiable one.
+        flow_texts = [
+            str(m.get("content", "")) for m in messages[flow_start:] if m.get("role") == "user"
+        ]
+        target: dict[str, Any] | None = None
+        for text in reversed(flow_texts):
+            match = _BOOKING_ID_RE.search(text)
+            if match:
+                wanted = int(match.group(1))
+                target = next((b for b in bookings if b.get("booking_id") == wanted), None)
+                if target is not None:
+                    break
+        if target is None:
+            for text in reversed(flow_texts):
+                room = _match_room_type(text, context.room_types)
+                if room is not None:
+                    target = next(
+                        (b for b in bookings if b.get("room_type") == room["room_type"]),
+                        None,
+                    )
+                    if target is not None:
+                        break
+        modifiable = [b for b in bookings if b.get("modifiable")]
+        if target is None and len(bookings) == 1:
+            target = bookings[0]
+        if target is None and len(modifiable) == 1:
+            target = modifiable[0]
+        if target is None:
+            return LLMResponse(content=_render_my_bookings(bookings_data, lang))
+        if not target.get("modifiable"):
+            return LLMResponse(
+                content=_t(
+                    lang,
+                    "modify_ineligible",
+                    booking_id=target["booking_id"],
+                    reason=_ineligible_reason_text(target.get("ineligible_reason"), lang),
+                )
+            )
+
+        # 4. Collect the change slots; ask for them when none are known.
+        changes = self._gather_modify_changes(messages, flow_start, target, context, today)
+        if not changes:
+            return LLMResponse(
+                content=_t(
+                    lang,
+                    "modify_ask_change",
+                    booking_id=target["booking_id"],
+                    room_type=target["room_type"],
+                    check_in=target["check_in"],
+                    check_out=target["check_out"],
+                )
+            )
+
+        # 5. Preview (or re-state the pending preview when nothing new
+        # was said since it was produced).
+        args: dict[str, Any] = {
+            "hotel_id": context.hotel_id,
+            "booking_id": target["booking_id"],
+            **changes,
+        }
+        last_call = self._last_tool_call(messages, "preview_booking_modification")
+        if last_call is not None and self._same_modify_args(
+            last_call.get("arguments", {}), args
+        ):
+            preview = self._latest_tool_result(messages, "preview_booking_modification")
+            if preview:
+                return LLMResponse(
+                    content=_summarize("preview_booking_modification", preview, lang)
+                    or _t(lang, "modify_failed")
+                )
+        return LLMResponse(
+            tool_calls=[ToolCallRequest(name="preview_booking_modification", arguments=args)]
         )
 
     @staticmethod
@@ -1202,9 +1861,11 @@ class MockProvider:
             )
         return LLMResponse(content=_t(_lang(context), "booking_ask_contact"))
 
-    @staticmethod
     def _summarize_latest_tool_result(
-        messages: list[dict[str, Any]], lang: ResponseLanguage = ResponseLanguage.ENGLISH
+        self,
+        messages: list[dict[str, Any]],
+        lang: ResponseLanguage = ResponseLanguage.ENGLISH,
+        context: ProviderContext | None = None,
     ) -> str | None:
         """Turn the newest tool result into a guest-facing reply.
 
@@ -1222,6 +1883,11 @@ class MockProvider:
             if i < last_user_idx:
                 return None
             name = msg.get("name", "")
+            if name == "get_my_bookings" and self._modify_flow_start(messages) is not None:
+                # Intermediate step of the modify flow, not a final
+                # answer: let the modify router continue (it renders
+                # this same list itself when it needs the guest to pick).
+                return None
             content = str(msg.get("content", ""))
             if content.startswith("ERROR:"):
                 return f"I ran into an issue: {content[6:].strip()} Could you try rephrasing?"
@@ -1237,7 +1903,12 @@ class MockProvider:
                 return None
             if not isinstance(data, dict):
                 return None
-            return _summarize(name, data, lang)
+            text = _summarize(name, data, lang)
+            if text is not None and context is not None:
+                prefix = _relative_date_prefix(messages, context, name, data)
+                if prefix:
+                    return f"{prefix}\n{text}"
+            return text
         return None
 
     @staticmethod

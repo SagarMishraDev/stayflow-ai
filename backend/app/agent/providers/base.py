@@ -43,6 +43,7 @@ class ProviderContext:
     hotel_name: str
     currency: str
     today: str  # ISO date, hotel-local
+    timezone: str = "Asia/Kolkata"  # IANA name of the hotel's timezone
     room_types: list[dict[str, Any]] = field(default_factory=list)
     guest_id: int | None = None
     guest_name: str | None = None
