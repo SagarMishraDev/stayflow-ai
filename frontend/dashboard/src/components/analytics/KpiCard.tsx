@@ -71,7 +71,7 @@ export function KpiCard({
   spark?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[128px] flex-col rounded-2xl border border-line bg-white p-4 shadow-card">
+    <div className="ax-card flex min-h-[128px] flex-col p-4">
       <div className="flex items-start justify-between gap-2">
         <span
           aria-hidden
@@ -81,21 +81,21 @@ export function KpiCard({
         </span>
         {spark}
       </div>
-      <p className="mt-3 text-[26px] font-bold leading-none tabular-nums text-ink">{value}</p>
-      <p className="mt-1.5 text-[12.5px] font-medium text-ink-soft">{label}</p>
-      {sub ? <p className="mt-1 text-[11.5px] text-ink-muted">{sub}</p> : null}
+      <p className="mt-3 text-[26px] font-bold leading-none tabular-nums text-[#102A43]">{value}</p>
+      <p className="mt-1.5 text-[12.5px] font-medium text-[#52677D]">{label}</p>
+      {sub ? <p className="mt-1 text-[11.5px] text-[#8293A5]">{sub}</p> : null}
       {delta ? (
         <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[11.5px]">
           {delta.value === null ? (
-            <span className="font-medium text-ink-muted">No baseline</span>
+            <span className="font-medium text-[#8293A5]">No baseline</span>
           ) : (
             <span
               className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold tabular-nums ${
                 delta.favorable === null
-                  ? "bg-mist text-ink-soft"
+                  ? "bg-[#F8FAFC] text-[#52677D]"
                   : delta.favorable
-                    ? "bg-emerald/10 text-emerald"
-                    : "bg-coral-soft text-coral-deep"
+                    ? "bg-[#10B981]/10 text-[#10B981]"
+                    : "bg-[#FDECEC] text-[#C22F2F]"
               }`}
             >
               <svg
@@ -112,7 +112,7 @@ export function KpiCard({
                 : formatPct(delta.value)}
             </span>
           )}
-          <span className="text-ink-muted">{delta.caption}</span>
+          <span className="text-[#8293A5]">{delta.caption}</span>
         </p>
       ) : null}
     </div>

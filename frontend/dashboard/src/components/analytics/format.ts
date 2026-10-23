@@ -46,6 +46,61 @@ export function periodLabel(period: string, style: "short" | "full" = "short"): 
   return period;
 }
 
+/** The four trend-series colours, assigned chronologically to the
+ * four displayed months (oldest → newest). Fixed by the design spec. */
+export const MONTH_SERIES_COLORS = ["#0F9D94", "#3B82F6", "#8B5CF6", "#F59E0B"];
+
+/** Canonical room-type colours (approved design): the three known
+ * types are pinned by name; any additional room type takes the next
+ * colour from the extended palette, in first-seen order. The same
+ * mapping is used by the grouped bars, the category donut, legend
+ * chips and table indicators so a type keeps one colour everywhere. */
+export const ROOM_TYPE_COLORS: Record<string, string> = {
+  "Heritage Suite": "#0F9D94",
+  "Deluxe King Room": "#3B82F6",
+  "Executive Twin Room": "#F59E0B",
+};
+export const ROOM_TYPE_FALLBACK = [
+  "#8B5CF6",
+  "#10B981",
+  "#EF4444",
+  "#087E78",
+  "#18B8AC",
+  "#8293A5",
+];
+
+export function roomTypeColor(roomType: string, fallbackIndex = 0): string {
+  return (
+    ROOM_TYPE_COLORS[roomType] ??
+    ROOM_TYPE_FALLBACK[fallbackIndex % ROOM_TYPE_FALLBACK.length]
+  );
+}
+
+/** Deterministic colour map for a set of room types: pinned colours
+ * by name; unpinned types take the fallback palette in ALPHABETICAL
+ * order, so every chart/table on the page assigns the same colour to
+ * the same type regardless of sort order. */
+export function buildRoomColorMap(roomTypes: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const unpinned = roomTypes.filter((t) => !(t in ROOM_TYPE_COLORS)).sort();
+  for (const t of roomTypes) if (t in ROOM_TYPE_COLORS) map.set(t, ROOM_TYPE_COLORS[t]);
+  unpinned.forEach((t, i) => map.set(t, ROOM_TYPE_FALLBACK[i % ROOM_TYPE_FALLBACK.length]));
+  return map;
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "2026-10" → "October 2026" (or "Oct 2026" when short). */
+export function monthLabel(key: string, style: "long" | "short" = "long"): string {
+  const m = key.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return key;
+  const name = style === "long" ? MONTH_NAMES[Number(m[2]) - 1] : MONTHS[Number(m[2]) - 1];
+  return `${name} ${m[1]}`;
+}
+
 /** Percent change of current vs baseline; null when baseline is 0
  * (a percentage against nothing would be misleading). */
 export function pctChange(current: number, baseline: number): number | null {

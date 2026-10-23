@@ -278,7 +278,7 @@ def test_activity_feed_merges_booking_and_payment_events():
             .order_by(Booking.id)
             .all()
         )
-        b1, b2, b3 = bookings[0], bookings[1], bookings[2]
+        b2, b3 = bookings[1], bookings[2]
         _audit(
             db,
             hotel["id"],
@@ -373,3 +373,165 @@ def test_activity_feed_is_hotel_scoped_and_role_gated():
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 403
+
+
+# --------------------------------------------------------------------- #
+# Rolling range presets + previous-period comparison (2026-10-23)       #
+# --------------------------------------------------------------------- #
+def test_resolve_range_rolling_presets():
+    from app.services.analytics import resolve_range
+
+    today = date(2026, 10, 23)
+    # Last 7 days = today + the six days before it.
+    assert resolve_range("last_7_days", today=today) == (date(2026, 10, 17), date(2026, 10, 24))
+    # Last 30 days = today + the 29 days before it.
+    assert resolve_range("last_30_days", today=today) == (date(2026, 9, 24), date(2026, 10, 24))
+    # The endpoints accept the new keys too.
+    hotel = _fixtures()
+    for key in ("last_7_days", "last_30_days"):
+        r = client.get(
+            "/api/v1/analytics/overview", params={"hotel_id": hotel["id"], "range": key}
+        )
+        ok(r, 200)
+        assert r.json()["period_days"] == (7 if key == "last_7_days" else 30)
+
+
+def test_previous_period_bounds_math():
+    from app.services.analytics import previous_period_bounds
+
+    # 31-day October -> the 31 days ending where October starts.
+    assert previous_period_bounds((date(2026, 10, 1), date(2026, 11, 1))) == (
+        date(2026, 8, 31),
+        date(2026, 10, 1),
+    )
+    import pytest
+
+    with pytest.raises(ValueError):
+        previous_period_bounds((None, None))
+
+
+def test_compare_previous_period_uses_equal_length_window_before():
+    hotel = _fixtures()
+    r = client.get(
+        "/api/v1/analytics/compare",
+        params={
+            "hotel_id": hotel["id"],
+            "range_a": "custom",
+            "a_start": "2026-10-01",
+            "a_end": "2026-10-31",
+            "range_b": "previous_period",
+        },
+    )
+    ok(r, 200)
+    body = r.json()
+    assert body["current"]["total_revenue"] == "12000"
+    # Previous period = 2026-08-31..2026-10-01, which contains the
+    # fixture's 2026-09-15 stay (₹5,000) and nothing else.
+    assert body["previous"]["total_revenue"] == "5000"
+
+
+# --------------------------------------------------------------------- #
+# Popularity series (grouped bars)                                       #
+# --------------------------------------------------------------------- #
+def test_popularity_series_month_bucket_splits_by_room_type():
+    hotel = _fixtures()
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "month", **OCT},
+    )
+    ok(r, 200)
+    body = r.json()
+    assert body["period_days"] == 31
+    assert [b["period"] for b in body["buckets"]] == ["2026-10"]
+    cells = {c["room_type"]: c for c in body["buckets"][0]["rooms"]}
+    assert cells["Deluxe"] == {"room_type": "Deluxe", "bookings": 2, "revenue": "12000"}
+    # Zero-booking room types are present in the bucket, zero-filled.
+    assert cells["Standard"]["bookings"] == 0
+    assert cells["Suite"]["bookings"] == 0
+    totals = {row["room_type"]: row for row in body["room_types"]}
+    assert totals["Deluxe"]["bookings"] == 2
+    assert totals["Deluxe"]["occupied_room_nights"] == 3
+    assert totals["Deluxe"]["available_room_nights"] == 5 * 31
+    assert totals["Deluxe"]["occupancy_rate"] == round(3 / 155 * 100, 2)
+
+
+def test_popularity_series_day_and_week_bucket_boundaries():
+    hotel = _fixtures()
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "day", **OCT},
+    )
+    ok(r, 200)
+    buckets = r.json()["buckets"]
+    assert len(buckets) == 31
+    assert buckets[0]["period"] == "2026-10-01"
+    assert buckets[-1]["period"] == "2026-10-31"
+    by_day = {b["period"]: {c["room_type"]: c for c in b["rooms"]} for b in buckets}
+    assert by_day["2026-10-10"]["Deluxe"]["revenue"] == "8000"
+    assert by_day["2026-10-20"]["Deluxe"]["bookings"] == 1
+    # The cancelled Standard stay on 2026-10-05 contributes nothing.
+    assert by_day["2026-10-05"]["Standard"]["bookings"] == 0
+
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "week", **OCT},
+    )
+    ok(r, 200)
+    weeks = r.json()["buckets"]
+    # Weeks are Monday-keyed; Oct 2026 starts on a Thursday, so the
+    # first bucket is Mon 2026-09-28 and the last Mon 2026-10-26.
+    assert [b["period"] for b in weeks] == [
+        "2026-09-28",
+        "2026-10-05",
+        "2026-10-12",
+        "2026-10-19",
+        "2026-10-26",
+    ]
+    by_week = {b["period"]: {c["room_type"]: c for c in b["rooms"]} for b in weeks}
+    # Check-in Sat 2026-10-10 lands in the Mon 2026-10-05 bucket.
+    assert by_week["2026-10-05"]["Deluxe"]["revenue"] == "8000"
+    # Check-in Tue 2026-10-20 lands in the Mon 2026-10-19 bucket.
+    assert by_week["2026-10-19"]["Deluxe"]["revenue"] == "4000"
+
+
+def test_popularity_series_is_hotel_scoped_and_role_gated():
+    hotel = _fixtures()
+    other = make_hotel()
+
+    # Same-hotel staff token against ANOTHER hotel -> 403 (not 404).
+    from app.core.security import create_access_token, hash_password
+    from app.db.session import SessionLocal
+    from app.models.hotel_user import HotelUser
+
+    db = SessionLocal()
+    try:
+        user = HotelUser(
+            hotel_id=hotel["id"],
+            name="Series Analyst",
+            email=f"series-analyst-{hotel['id']}@example.com",
+            role="hotel_admin",
+            password_hash=hash_password("series-pass-123"),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        token = create_access_token(
+            hotel_user_id=user.id, hotel_id=user.hotel_id, role=user.role
+        )
+    finally:
+        db.close()
+    plain = TestClient(app)
+    r = plain.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": other["id"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+    # Unauthenticated -> 401, and a bad group_by -> 422.
+    r = plain.get("/api/v1/analytics/popularity-series", params={"hotel_id": hotel["id"]})
+    assert r.status_code == 401
+    r = client.get(
+        "/api/v1/analytics/popularity-series",
+        params={"hotel_id": hotel["id"], "group_by": "hour", **OCT},
+    )
+    assert r.status_code == 422

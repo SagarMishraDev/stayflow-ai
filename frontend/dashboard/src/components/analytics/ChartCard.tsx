@@ -19,12 +19,12 @@ export function ChartCard({
   return (
     <section
       aria-label={labelledBy ?? title}
-      className="rounded-2xl border border-line bg-white p-5 shadow-card"
+      className="ax-card p-5"
     >
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-[16px] font-bold leading-snug text-ink">{title}</h2>
-          {subtitle ? <p className="mt-0.5 text-xs text-ink-muted">{subtitle}</p> : null}
+          <h2 className="text-[16px] font-bold leading-snug text-[#102A43]">{title}</h2>
+          {subtitle ? <p className="mt-0.5 text-xs text-[#8293A5]">{subtitle}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
@@ -40,7 +40,7 @@ export function EmptyState({ message }: { message: string }) {
     <div className="flex flex-col items-center justify-center px-4 py-10 text-center">
       <span
         aria-hidden
-        className="grid h-11 w-11 place-items-center rounded-full bg-mist text-ink-muted"
+        className="grid h-11 w-11 place-items-center rounded-full bg-[#F8FAFC] text-[#8293A5]"
       >
         <svg
           width="20"
@@ -57,7 +57,7 @@ export function EmptyState({ message }: { message: string }) {
           <line x1="6" y1="20" x2="6" y2="16" />
         </svg>
       </span>
-      <p className="mt-3 max-w-[260px] text-[13px] leading-relaxed text-ink-soft">{message}</p>
+      <p className="mt-3 max-w-[260px] text-[13px] leading-relaxed text-[#52677D]">{message}</p>
     </div>
   );
 }
@@ -67,7 +67,7 @@ export function ChartSkeleton({ height = 240 }: { height?: number }) {
     <div
       aria-busy="true"
       aria-label="Loading chart"
-      className="animate-pulse rounded-xl bg-mist"
+      className="animate-pulse rounded-xl bg-[#F8FAFC]"
       style={{ height }}
     />
   );

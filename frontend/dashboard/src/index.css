@@ -12,58 +12,47 @@ body {
 
 /* Visible focus for keyboard navigation, everywhere. */
 :focus-visible {
-  outline: 2px solid #0f9d94;
+  outline: 2px solid #1ba39c;
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* Respect reduced-motion preferences. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
 @layer base {
-  /* View 2: headings in Inter, sentence case, tight tracking. */
+  /* Landing design language: headings in Barlow Condensed, uppercase. */
   h1,
   h2,
   h3 {
-    @apply font-sans;
-    letter-spacing: -0.01em;
+    @apply font-display uppercase;
+    letter-spacing: 0.01em;
   }
 }
 
 @layer components {
   .panel {
-    @apply bg-white border border-line rounded-2xl shadow-card;
+    @apply bg-mist border border-line rounded-2xl shadow-card;
   }
   .panel-title {
-    @apply text-lg font-bold tracking-tight;
+    @apply font-display text-xl font-bold uppercase tracking-wide;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-extrabold
       transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
   }
   .btn-primary {
     @apply bg-deep-teal text-white shadow-card hover:bg-teal;
   }
   .btn-secondary {
-    @apply bg-white border border-line text-ink hover:bg-mist;
+    @apply bg-paper border border-line text-ink hover:bg-mist;
   }
   .btn-danger {
     @apply bg-coral-deep text-white hover:bg-coral-deep/85;
   }
   .input {
-    @apply w-full rounded-[0.65rem] border border-line bg-white px-3 py-2 text-sm
-      placeholder:text-ink-muted focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30;
+    @apply w-full rounded-[0.8rem] border border-line bg-white px-3 py-2 text-sm
+      placeholder:text-ink/40 focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30;
   }
   .label {
-    @apply block text-sm font-semibold mb-1;
+    @apply block text-sm font-extrabold mb-1;
   }
   .field-error {
     @apply text-sm font-semibold text-coral-deep mt-1;
@@ -72,13 +61,13 @@ body {
     @apply w-full text-sm;
   }
   .table th {
-    @apply bg-surface text-left text-xs font-semibold uppercase tracking-[0.06em]
-      text-ink-soft border-b border-line px-3 py-2.5;
+    @apply bg-paper/60 text-left font-display text-[0.95rem] font-semibold uppercase tracking-[0.08em]
+      text-deep-teal border-b border-line px-3 py-2.5;
   }
   .table td {
-    @apply border-b border-divider px-3 py-2 align-top;
+    @apply border-b border-ink/10 px-3 py-2 align-top;
   }
   .table tbody tr:hover {
-    @apply bg-surface;
+    @apply bg-paper/70;
   }
 }

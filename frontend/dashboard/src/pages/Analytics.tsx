@@ -1,22 +1,28 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { PageHeader } from "../components/DataStates";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth";
 import {
+  COMPARE_OPTIONS,
   downloadCsv,
   fetchActivity,
   fetchBreakdowns,
   fetchCompare,
   fetchOverview,
-  fetchPopularity,
+  fetchPopularitySeries,
   fetchSeries,
   RANGE_OPTIONS,
+  type PopularityRow,
   type RangeParams,
 } from "../lib/analyticsApi";
 import { ChartCard, ChartSkeleton, EmptyState } from "../components/analytics/ChartCard";
 import { KpiCard, KpiIcon, Sparkline, type KpiDelta } from "../components/analytics/KpiCard";
-import { RevenueTrendChart } from "../components/analytics/RevenueTrendChart";
-import { RoomPopularityChart } from "../components/analytics/RoomPopularityChart";
+import {
+  HourlyTrendChart,
+  RevenueTrendChart,
+  alignMonthPoints,
+  type MonthSeries,
+} from "../components/analytics/RevenueTrendChart";
+import { RoomPopularityBars } from "../components/analytics/RoomPopularityChart";
 import {
   DonutChart,
   HorizontalBars,
@@ -24,9 +30,18 @@ import {
   type ChartRow,
 } from "../components/analytics/BreakdownCharts";
 import { RecentActivity } from "../components/analytics/RecentActivity";
-import { inr, num, pctChange } from "../components/analytics/format";
+import {
+  MONTH_SERIES_COLORS,
+  buildRoomColorMap,
+  inr,
+  monthLabel,
+  num,
+  pctChange,
+} from "../components/analytics/format";
+import "./analytics.css";
 
 type SortKey = "bookings" | "revenue" | "occupancy";
+type PopPeriod = "day" | "week" | "month" | "year";
 
 const GROUP_OPTIONS: { key: string; label: string }[] = [
   { key: "hour", label: "Hourly" },
@@ -36,7 +51,12 @@ const GROUP_OPTIONS: { key: string; label: string }[] = [
   { key: "year", label: "Yearly" },
 ];
 
-const CATEGORY_COLORS = ["#087E78", "#18B8AC", "#FBBF24", "#0F9D94", "#8B5CF6", "#3B82F6", "#075E5A"];
+const POP_PERIOD_OPTIONS: { key: PopPeriod; label: string }[] = [
+  { key: "day", label: "Day" },
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+];
 
 const PAYMENT_STYLE: Record<string, { label: string; color: string }> = {
   upi: { label: "UPI", color: "#0F9D94" },
@@ -47,13 +67,14 @@ const PAYMENT_STYLE: Record<string, { label: string; color: string }> = {
 };
 
 /** Friendly labels for the booking sources the backend actually
- * stamps. Anything unrecognised falls back to "Unknown" only when the
- * backend itself reports it as unknown; other keys are shown prettified
- * rather than invented. */
+ * stamps. Anything unrecognised is shown prettified rather than
+ * invented; the backend's own fallback key renders as "Unknown". */
 const SOURCE_LABELS: Record<string, string> = {
   agent_chat: "AI concierge",
   widget: "Website widget",
   dashboard: "Front desk",
+  direct: "Direct",
+  website: "Website",
   walk_in: "Walk-in",
   integration: "Integration",
   unknown: "Unknown",
@@ -64,14 +85,107 @@ const DEPARTMENT_STYLE: Record<string, { label: string; color: string }> = {
   food_and_beverage: { label: "Food & beverage", color: "#087E78" },
 };
 
+const PAYMENT_FALLBACK = ["#0F9D94", "#3B82F6", "#8B5CF6", "#F59E0B", "#10B981"];
+
 function prettify(key: string): string {
   const s = key.replace(/_/g, " ").trim();
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : key;
 }
 
-const selectCls =
-  "rounded-[10px] border border-line bg-white px-3 py-2 text-[13.5px] font-medium text-ink";
-const labelCls = "flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-ink-muted";
+/* ------------------------------------------------------------------ */
+/* Four-month windows for the Revenue Trend                            */
+/*                                                                     */
+/* Rule (approved master revision): the chart shows the month that     */
+/* contains the selected range's END date plus the three preceding     */
+/* calendar months, in chronological order. Each month is fetched      */
+/* separately as a custom range through the existing series API.       */
+/* ------------------------------------------------------------------ */
+
+function iso(d: Date): string {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Last day of the selected period (local date), mirroring the
+ * backend's resolve_range bounds for each preset key. */
+function resolvePeriodEnd(rangeKey: string, customEnd: string): Date {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (rangeKey) {
+    case "yesterday":
+      return new Date(today.getTime() - 86400000);
+    case "last_week": {
+      // Backend weeks start Monday: this week's Monday minus one day
+      // is last week's Sunday (the last day of the last-week period).
+      const dow = (today.getDay() + 6) % 7; // days since Monday
+      const monday = new Date(today.getTime() - dow * 86400000);
+      return new Date(monday.getTime() - 86400000);
+    }
+    case "last_month":
+      return new Date(today.getFullYear(), today.getMonth(), 0);
+    case "last_quarter": {
+      const qStartMonth = Math.floor(today.getMonth() / 3) * 3;
+      return new Date(today.getFullYear(), qStartMonth, 0);
+    }
+    case "last_year":
+      return new Date(today.getFullYear() - 1, 11, 31);
+    case "custom": {
+      const parsed = new Date(`${customEnd}T00:00:00`);
+      return Number.isNaN(parsed.getTime()) ? today : parsed;
+    }
+    default:
+      return today;
+  }
+}
+
+interface MonthWindow {
+  key: string;
+  start: string;
+  end: string;
+}
+
+function fourMonthWindows(rangeKey: string, customEnd: string): MonthWindow[] {
+  const end = resolvePeriodEnd(rangeKey, customEnd);
+  const windows: MonthWindow[] = [];
+  for (let back = 3; back >= 0; back--) {
+    const first = new Date(end.getFullYear(), end.getMonth() - back, 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+    windows.push({ key: iso(first).slice(0, 7), start: iso(first), end: iso(last) });
+  }
+  return windows;
+}
+
+function SegmentedControl<T extends string>({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  options: { key: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div role="group" aria-label={ariaLabel} className="flex rounded-[10px] bg-[#F8FAFC] p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          aria-pressed={value === o.key}
+          onClick={() => onChange(o.key)}
+          className={`rounded-lg px-2.5 py-1 text-xs font-medium ${
+            value === o.key
+              ? "bg-white font-semibold text-[#102A43] shadow-sm"
+              : "text-[#52677D] hover:text-[#102A43]"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function Analytics() {
   const { hotelId } = useAuth();
@@ -79,8 +193,9 @@ export default function Analytics() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [groupBy, setGroupBy] = useState("day");
-  const [compareKey, setCompareKey] = useState<string>("last_month");
+  const [compareKey, setCompareKey] = useState<string>("previous_period");
   const [sortKey, setSortKey] = useState<SortKey>("bookings");
+  const [popPeriod, setPopPeriod] = useState<PopPeriod>("day");
 
   const rangeParams: RangeParams | null = useMemo(() => {
     if (!hotelId) return null;
@@ -119,9 +234,9 @@ export default function Analytics() {
     queryFn: () => fetchBreakdowns(hotelId!, rangeParams!),
     enabled: ready,
   });
-  const popularityQ = useQuery({
-    queryKey: ["analytics", "popularity", hotelId, rangeParams],
-    queryFn: () => fetchPopularity(hotelId!, rangeParams!),
+  const popularitySeriesQ = useQuery({
+    queryKey: ["analytics", "popularity-series", hotelId, rangeParams, popPeriod],
+    queryFn: () => fetchPopularitySeries(hotelId!, rangeParams!, popPeriod),
     enabled: ready,
   });
   const activityQ = useQuery({
@@ -130,12 +245,48 @@ export default function Analytics() {
     enabled: Boolean(hotelId),
   });
 
+  /* Four-month trend: one series query per displayed month. */
+  const monthWindows = useMemo(
+    () => (rangeParams ? fourMonthWindows(range, to) : []),
+    [rangeParams, range, to],
+  );
+  const monthQueries = useQueries({
+    queries: monthWindows.map((w) => ({
+      queryKey: [
+        "analytics",
+        "series",
+        hotelId,
+        { range: "custom", start: w.start, end: w.end },
+        groupBy,
+      ],
+      queryFn: () =>
+        fetchSeries(hotelId!, { range: "custom", start: w.start, end: w.end }, groupBy),
+      enabled: ready && groupBy !== "hour",
+    })),
+  });
+  const monthSeries: MonthSeries[] = useMemo(
+    () =>
+      monthWindows.map((w, i) => {
+        const points = monthQueries[i]?.data ?? [];
+        return {
+          key: w.key,
+          label: monthLabel(w.key),
+          color: MONTH_SERIES_COLORS[i % MONTH_SERIES_COLORS.length],
+          total: points.reduce((s, p) => s + num(p.revenue), 0),
+          bookings: points.reduce((s, p) => s + p.bookings, 0),
+          points: alignMonthPoints(points, groupBy),
+        };
+      }),
+    [monthWindows, monthQueries, groupBy],
+  );
+  const monthsLoading = monthQueries.some((q) => q.isLoading);
+  const monthsError = monthQueries.some((q) => q.isError);
+
   const kpi = overviewQ.data;
   const breakdowns = breakdownsQ.data;
-  const compareLabel =
-    compareEnabled && compareKey !== "none"
-      ? (RANGE_OPTIONS.find((o) => o.key === compareKey)?.label ?? compareKey)
-      : null;
+  const compareLabel = compareEnabled
+    ? (COMPARE_OPTIONS.find((o) => o.key === compareKey)?.label ?? compareKey)
+    : null;
   const rangeLabel = RANGE_OPTIONS.find((o) => o.key === range)?.label ?? range;
 
   /** Direction-aware delta vs the comparison period's overview. */
@@ -165,20 +316,54 @@ export default function Analytics() {
     };
   };
 
-  const sortedRooms = useMemo(() => {
-    const rooms = popularityQ.data?.rooms ?? [];
-    return [...rooms].sort((a, b) => {
+  /* Room popularity (grouped bars): order + colours are shared with
+   * the table and the category donut. */
+  const popData = popularitySeriesQ.data;
+  const sortedTypes = useMemo(() => {
+    const rows = [...(popData?.room_types ?? [])];
+    rows.sort((a, b) => {
       if (sortKey === "revenue") return num(b.revenue) - num(a.revenue);
       if (sortKey === "occupancy") return b.occupancy_rate - a.occupancy_rate;
       return b.bookings - a.bookings;
     });
-  }, [popularityQ.data, sortKey]);
+    return rows;
+  }, [popData, sortKey]);
+  const totalsByType = useMemo(
+    () => new Map(sortedTypes.map((r) => [r.room_type, r])),
+    [sortedTypes],
+  );
+  const colorMap = useMemo(
+    () =>
+      buildRoomColorMap([
+        ...sortedTypes.map((r) => r.room_type),
+        ...(breakdowns?.by_room_category ?? []).map((r) => r.key),
+      ]),
+    [sortedTypes, breakdowns],
+  );
+  const colorFor = (roomType: string) => colorMap.get(roomType) ?? "#8293A5";
+  const mostBooked = useMemo(() => {
+    if (!sortedTypes.length) return [];
+    const max = Math.max(...sortedTypes.map((r) => r.bookings));
+    return sortedTypes.filter((r) => r.bookings === max);
+  }, [sortedTypes]);
+  const leastBooked = useMemo(() => {
+    if (!sortedTypes.length) return [];
+    const min = Math.min(...sortedTypes.map((r) => r.bookings));
+    return sortedTypes.filter((r) => r.bookings === min);
+  }, [sortedTypes]);
+  const sparkFor = (roomType: string): number[] =>
+    (popData?.buckets ?? []).map(
+      (b) => b.rooms.find((c) => c.room_type === roomType)?.bookings ?? 0,
+    );
+  const periodDays = popData?.period_days ?? 0;
+  const maxTypeBookings = Math.max(1, ...sortedTypes.map((r) => r.bookings));
+  const maxTypeRevenue = Math.max(1, ...sortedTypes.map((r) => num(r.revenue)));
 
-  const categoryRows: ChartRow[] = (breakdowns?.by_room_category ?? []).map((r, i) => ({
+  const categoryRows: ChartRow[] = (breakdowns?.by_room_category ?? []).map((r) => ({
     label: r.key,
     value: num(r.revenue),
     bookings: r.bookings,
-    color: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
+    color: colorFor(r.key),
   }));
   const sourceRows: ChartRow[] = (breakdowns?.by_booking_source ?? []).map((r) => ({
     label: SOURCE_LABELS[r.key] ?? prettify(r.key),
@@ -189,7 +374,7 @@ export default function Analytics() {
   const paymentRows: ChartRow[] = (breakdowns?.by_payment_method ?? []).map((r, i) => {
     const style = PAYMENT_STYLE[r.key] ?? {
       label: prettify(r.key),
-      color: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
+      color: PAYMENT_FALLBACK[i % PAYMENT_FALLBACK.length],
     };
     return { label: style.label, value: num(r.revenue), bookings: r.bookings, color: style.color };
   });
@@ -211,19 +396,23 @@ export default function Analytics() {
   const seriesBookings = (seriesQ.data ?? []).map((p) => p.bookings);
 
   return (
-    <div>
-      <PageHeader
-        title="Analytics"
-        description="Track your hotel performance and revenue insights."
-      />
+    <div className="analytics-root">
+      {/* Page header (scoped replacement for the shared PageHeader so
+          the global Barlow heading style stays untouched elsewhere). */}
+      <div className="mb-6">
+        <h1 className="text-[28px] font-bold leading-tight">Analytics</h1>
+        <p className="mt-1 text-sm text-[#52677D]">
+          Track your hotel performance and revenue insights.
+        </p>
+      </div>
 
       {/* Filters */}
-      <div className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-line bg-white p-4 shadow-card">
-        <label className={labelCls}>
+      <div className="ax-card mb-5 flex flex-wrap items-end gap-3 p-4">
+        <label className="ax-label">
           Date range
           <select
             aria-label="Date range"
-            className={selectCls}
+            className="ax-select"
             value={range}
             onChange={(e) => setRange(e.target.value)}
           >
@@ -236,54 +425,54 @@ export default function Analytics() {
         </label>
         {range === "custom" && (
           <>
-            <label className={labelCls}>
+            <label className="ax-label">
               From
               <input
                 type="date"
                 aria-label="From date"
-                className={selectCls}
+                className="ax-select"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
             </label>
-            <label className={labelCls}>
+            <label className="ax-label">
               To
               <input
                 type="date"
                 aria-label="To date"
-                className={selectCls}
+                className="ax-select"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
               />
             </label>
           </>
         )}
-        <label className={labelCls}>
+        <label className="ax-label">
           Compare with
           <select
             aria-label="Comparison period"
-            className={selectCls}
+            className="ax-select"
             value={compareKey}
             onChange={(e) => setCompareKey(e.target.value)}
           >
-            <option value="none">No comparison</option>
-            {RANGE_OPTIONS.filter((o) => o.key !== "custom").map((o) => (
+            {COMPARE_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>
                 {o.label}
               </option>
             ))}
           </select>
         </label>
+        <span className="pb-2 text-xs text-[#8293A5]">Showing: {rangeLabel}</span>
         <div className="ml-auto flex flex-wrap gap-2">
           <button
-            className="btn-secondary"
+            className="ax-btn"
             disabled={!ready}
             onClick={() => void exportCsv("series")}
           >
             Export revenue CSV
           </button>
           <button
-            className="btn-secondary"
+            className="ax-btn"
             disabled={!ready}
             onClick={() => void exportCsv("room-popularity")}
           >
@@ -293,13 +482,13 @@ export default function Analytics() {
       </div>
 
       {overviewQ.isError && (
-        <div className="mb-4 rounded-xl border border-coral/40 bg-coral-soft px-4 py-3 text-sm text-coral-deep">
+        <div className="mb-4 rounded-xl border border-[#EF4444]/40 bg-[#FDECEC] px-4 py-3 text-sm text-[#C22F2F]">
           Analytics failed to load. Try changing the range or refreshing.
         </div>
       )}
 
       {!ready && hotelId ? (
-        <p className="mb-4 rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink-soft">
+        <p className="mb-4 rounded-xl border border-[#E3EAF0] bg-white px-4 py-3 text-sm text-[#52677D]">
           Pick a start and end date to see analytics for the custom range.
         </p>
       ) : null}
@@ -324,7 +513,7 @@ export default function Analytics() {
                 <path d="M6 12h.01M18 12h.01" />
               </KpiIcon>
             }
-            iconClass="bg-pale text-dark-teal"
+            iconClass="bg-[#E7F7F4] text-[#087E78]"
             delta={delta(num(kpi.total_revenue), prev ? num(prev.total_revenue) : undefined, true)}
             spark={
               <Sparkline data={seriesRevenue} label={`Revenue sparkline, peak ${inr(Math.max(0, ...seriesRevenue))}`} />
@@ -339,7 +528,7 @@ export default function Analytics() {
                 <path d="M20 6 9 17l-5-5" />
               </KpiIcon>
             }
-            iconClass="bg-emerald/10 text-emerald"
+            iconClass="bg-[#10B981]/10 text-[#10B981]"
             delta={delta(num(kpi.revenue_collected), prev ? num(prev.revenue_collected) : undefined, true)}
           />
           <KpiCard
@@ -352,7 +541,7 @@ export default function Analytics() {
                 <path d="M12 7v5l3.2 2" />
               </KpiIcon>
             }
-            iconClass="bg-warn/10 text-[#B45309]"
+            iconClass="bg-[#F59E0B]/10 text-[#B45309]"
             delta={delta(num(kpi.pending_payments), prev ? num(prev.pending_payments) : undefined, false)}
           />
           <KpiCard
@@ -365,7 +554,7 @@ export default function Analytics() {
                 <path d="M3 4v5h5" />
               </KpiIcon>
             }
-            iconClass="bg-coral-soft text-coral-deep"
+            iconClass="bg-[#FDECEC] text-[#C22F2F]"
             delta={delta(num(kpi.refunds), prev ? num(prev.refunds) : undefined, false)}
           />
           <KpiCard
@@ -380,7 +569,7 @@ export default function Analytics() {
                 <line x1="3" y1="10" x2="21" y2="10" />
               </KpiIcon>
             }
-            iconClass="bg-info/10 text-info"
+            iconClass="bg-[#3B82F6]/10 text-[#3B82F6]"
             delta={delta(kpi.total_bookings, prev?.total_bookings, true)}
             spark={
               <Sparkline
@@ -400,7 +589,7 @@ export default function Analytics() {
                 <path d="M22 12A10 10 0 0 0 12 2v10z" />
               </KpiIcon>
             }
-            iconClass="bg-teal/10 text-teal"
+            iconClass="bg-[#0F9D94]/10 text-[#0F9D94]"
             delta={occupancyDelta()}
           />
           <KpiCard
@@ -413,7 +602,7 @@ export default function Analytics() {
                 <circle cx="7.5" cy="7.5" r="1.2" />
               </KpiIcon>
             }
-            iconClass="bg-grape/10 text-grape"
+            iconClass="bg-[#8B5CF6]/10 text-[#8B5CF6]"
             delta={delta(num(kpi.adr), prev ? num(prev.adr) : undefined, true)}
           />
           <KpiCard
@@ -427,7 +616,7 @@ export default function Analytics() {
                 <line x1="6" y1="20" x2="6" y2="16" />
               </KpiIcon>
             }
-            iconClass="bg-dark-teal/10 text-dark-teal"
+            iconClass="bg-[#087E78]/10 text-[#087E78]"
             delta={delta(num(kpi.revpar), prev ? num(prev.revpar) : undefined, true)}
           />
           <KpiCard
@@ -440,7 +629,7 @@ export default function Analytics() {
                 <polyline points="16 7 22 7 22 13" />
               </KpiIcon>
             }
-            iconClass="bg-sun/15 text-[#B45309]"
+            iconClass="bg-[#FBBF24]/15 text-[#B45309]"
             delta={delta(
               num(kpi.average_booking_value),
               prev ? num(prev.average_booking_value) : undefined,
@@ -458,54 +647,44 @@ export default function Analytics() {
                 <path d="M2 17h20" />
               </KpiIcon>
             }
-            iconClass="bg-pale text-deep-teal"
+            iconClass="bg-[#E7F7F4] text-[#075E5A]"
           />
         </div>
       ) : null}
 
-      {/* Row 1: revenue trend + room popularity */}
+      {/* Row 1: four-month revenue trend + room popularity bars */}
       <div className="mb-5 grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-7">
           <ChartCard
             title="Revenue trend"
-            subtitle="Bookings revenue over the selected period"
+            subtitle="Compare revenue across four months"
             actions={
-              <div
-                role="group"
-                aria-label="Group series by"
-                className="flex rounded-[10px] bg-mist p-0.5"
-              >
-                {GROUP_OPTIONS.map((o) => (
-                  <button
-                    key={o.key}
-                    type="button"
-                    aria-pressed={groupBy === o.key}
-                    onClick={() => setGroupBy(o.key)}
-                    className={`rounded-lg px-2.5 py-1 text-xs font-medium ${
-                      groupBy === o.key
-                        ? "bg-white font-semibold text-ink shadow-sm"
-                        : "text-ink-soft hover:text-ink"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl
+                options={GROUP_OPTIONS}
+                value={groupBy}
+                onChange={setGroupBy}
+                ariaLabel="Group series by"
+              />
             }
           >
-            {seriesQ.isLoading ? (
+            {groupBy === "hour" ? (
+              seriesQ.isLoading ? (
+                <ChartSkeleton height={300} />
+              ) : seriesQ.isError ? (
+                <p className="py-10 text-center text-sm text-[#C22F2F]">
+                  The revenue series could not be loaded.
+                </p>
+              ) : (
+                <HourlyTrendChart points={seriesQ.data ?? []} />
+              )
+            ) : monthsLoading ? (
               <ChartSkeleton height={300} />
-            ) : seriesQ.isError ? (
-              <p className="py-10 text-center text-sm text-coral-deep">
+            ) : monthsError ? (
+              <p className="py-10 text-center text-sm text-[#C22F2F]">
                 The revenue series could not be loaded.
               </p>
             ) : (
-              <RevenueTrendChart
-                current={seriesQ.data ?? []}
-                previous={compareEnabled ? compareQ.data?.series.previous : undefined}
-                currentLabel={rangeLabel}
-                comparisonLabel={compareLabel ?? undefined}
-              />
+              <RevenueTrendChart months={monthSeries} groupBy={groupBy} />
             )}
           </ChartCard>
         </div>
@@ -513,68 +692,134 @@ export default function Analytics() {
         <div className="xl:col-span-5">
           <ChartCard
             title="Room popularity"
-            subtitle="Bubble size = bookings in period"
+            subtitle="Bookings per period, grouped by room type"
             actions={
-              <select
-                aria-label="Sort room popularity by"
-                className={selectCls}
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value as SortKey)}
-              >
-                <option value="bookings">Bookings</option>
-                <option value="revenue">Revenue</option>
-                <option value="occupancy">Occupancy</option>
-              </select>
+              <>
+                <SegmentedControl
+                  options={POP_PERIOD_OPTIONS}
+                  value={popPeriod}
+                  onChange={setPopPeriod}
+                  ariaLabel="Room popularity period"
+                />
+                <select
+                  aria-label="Sort room popularity by"
+                  className="ax-select"
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                >
+                  <option value="bookings">Bookings</option>
+                  <option value="revenue">Revenue</option>
+                  <option value="occupancy">Occupancy</option>
+                </select>
+              </>
             }
           >
-            {popularityQ.isLoading ? (
+            {popularitySeriesQ.isLoading ? (
               <ChartSkeleton height={320} />
-            ) : popularityQ.isError ? (
-              <p className="py-10 text-center text-sm text-coral-deep">
+            ) : popularitySeriesQ.isError ? (
+              <p className="py-10 text-center text-sm text-[#C22F2F]">
                 Room popularity could not be loaded.
               </p>
-            ) : (
+            ) : popData ? (
               <>
-                {popularityQ.data && popularityQ.data.rooms.length > 0 ? (
+                {sortedTypes.length > 0 ? (
                   <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-xl bg-pale px-3 py-2 text-xs leading-relaxed text-ink">
-                      <span className="font-semibold text-deep-teal">Most booked:</span>{" "}
-                      {(popularityQ.data.most_booked ?? []).length
-                        ? popularityQ.data.most_booked
-                            .map((r) => `${r.room_type} (${r.bookings})`)
-                            .join(", ")
+                    <div className="rounded-xl bg-[#E7F7F4] px-3 py-2 text-xs leading-relaxed text-[#102A43]">
+                      <span className="font-semibold text-[#075E5A]">Most booked:</span>{" "}
+                      {mostBooked.length
+                        ? mostBooked.map((r) => `${r.room_type} (${r.bookings})`).join(", ")
                         : "—"}
                     </div>
-                    <div className="rounded-xl bg-sun/10 px-3 py-2 text-xs leading-relaxed text-ink">
+                    <div className="rounded-xl bg-[#FBBF24]/10 px-3 py-2 text-xs leading-relaxed text-[#102A43]">
                       <span className="font-semibold text-[#92600A]">Least booked:</span>{" "}
-                      {(popularityQ.data.least_booked ?? []).length
-                        ? popularityQ.data.least_booked
-                            .map((r) => `${r.room_type} (${r.bookings})`)
-                            .join(", ")
+                      {leastBooked.length
+                        ? leastBooked.map((r) => `${r.room_type} (${r.bookings})`).join(", ")
                         : "—"}
                     </div>
                   </div>
                 ) : null}
-                <RoomPopularityChart rows={sortedRooms} />
-                {sortedRooms.length > 0 ? (
+                <RoomPopularityBars
+                  data={popData}
+                  orderedTypes={sortedTypes.map((r) => r.room_type)}
+                  colorFor={colorFor}
+                  totalsByType={totalsByType}
+                />
+                {sortedTypes.length > 0 ? (
                   <div className="mt-4 overflow-x-auto">
-                    <table className="table min-w-[430px]">
+                    <table className="ax-table min-w-[560px]">
                       <thead>
                         <tr>
                           <th>Room type</th>
                           <th>Bookings</th>
                           <th>Revenue</th>
+                          <th>Avg / day</th>
                           <th>Occupancy</th>
+                          <th>Trend</th>
                           <th>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {sortedRooms.map((r) => (
+                        {sortedTypes.map((r: PopularityRow) => (
                           <tr key={r.room_id}>
-                            <td className="font-medium text-ink">{r.room_type}</td>
-                            <td>{r.bookings}</td>
-                            <td>{inr(r.revenue)}</td>
-                            <td>{r.occupancy_rate}%</td>
+                            <td className="font-medium text-[#102A43]">
+                              <span className="inline-flex items-center gap-2">
+                                <span
+                                  aria-hidden
+                                  className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                                  style={{ background: colorFor(r.room_type) }}
+                                />
+                                {r.room_type}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="tabular-nums">{r.bookings}</span>
+                              <span className="mt-1 block h-1.5 w-16 rounded-full bg-[#EDF1F5]">
+                                <span
+                                  className="block h-1.5 rounded-full"
+                                  style={{
+                                    width: `${(r.bookings / maxTypeBookings) * 100}%`,
+                                    background: colorFor(r.room_type),
+                                  }}
+                                />
+                              </span>
+                            </td>
+                            <td>
+                              <span className="tabular-nums">{inr(r.revenue)}</span>
+                              <span className="mt-1 block h-1.5 w-16 rounded-full bg-[#EDF1F5]">
+                                <span
+                                  className="block h-1.5 rounded-full"
+                                  style={{
+                                    width: `${(num(r.revenue) / maxTypeRevenue) * 100}%`,
+                                    background: colorFor(r.room_type),
+                                  }}
+                                />
+                              </span>
+                            </td>
+                            <td className="tabular-nums">
+                              {periodDays > 0 ? (r.bookings / periodDays).toFixed(2) : "—"}
+                            </td>
+                            <td>
+                              <span className="tabular-nums">{r.occupancy_rate}%</span>
+                              <span className="block text-[11px] text-[#8293A5]">
+                                {r.occupied_room_nights}/{r.available_room_nights} room-nights
+                              </span>
+                              <span className="mt-1 block h-1.5 w-16 rounded-full bg-[#EDF1F5]">
+                                <span
+                                  className="block h-1.5 rounded-full"
+                                  style={{
+                                    width: `${Math.min(100, r.occupancy_rate)}%`,
+                                    background: colorFor(r.room_type),
+                                  }}
+                                />
+                              </span>
+                            </td>
+                            <td>
+                              <Sparkline
+                                data={sparkFor(r.room_type)}
+                                stroke={colorFor(r.room_type)}
+                                label={`${r.room_type} bookings trend`}
+                              />
+                            </td>
                             <td>{r.is_active ? "Active" : "Inactive"}</td>
                           </tr>
                         ))}
@@ -583,7 +828,7 @@ export default function Analytics() {
                   </div>
                 ) : null}
               </>
-            )}
+            ) : null}
           </ChartCard>
         </div>
       </div>

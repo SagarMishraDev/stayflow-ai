@@ -4,67 +4,35 @@ export default {
   theme: {
     extend: {
       colors: {
-        // View 2 design system (approved 2026-10-23): navy/teal sidebar,
-        // cool-gray app background, white cards, teal/emerald data viz.
-        // Token NAMES are unchanged from the previous theme so every
-        // page inherits the new palette without a rewrite.
-        paper: "#F4F7FA", // app background
-        surface: "#F8FAFC", // secondary surface
+        // Landing-page design language (see frontend/landing/styles.css):
+        // paper / ink / sun / coral / teal / deep-teal / mist.
+        paper: "#FFFFFF", // page background, card surfaces
         ink: {
-          DEFAULT: "#102A43", // primary text
-          soft: "#52677D", // secondary text
-          muted: "#8293A5", // muted text
+          DEFAULT: "#2B2B2B", // text
+          soft: "#5C5C5C", // secondary text
         },
         sun: {
-          DEFAULT: "#FBBF24", // amber accent (zero-booking, warnings)
-          hover: "#F59E0B",
+          DEFAULT: "#FFD23F", // the one bold accent — always with ink text
+          hover: "#F5C61F",
         },
         coral: {
-          DEFAULT: "#EF4444", // danger
-          soft: "#FDECEC", // danger badge + alert backgrounds
+          DEFAULT: "#FF6B6B", // danger accents / borders
+          soft: "#FFE9E9", // danger badge + alert backgrounds
           deep: "#C22F2F", // danger text / solid danger (readable on white)
         },
-        teal: "#0F9D94", // primary brand teal
-        "dark-teal": "#087E78",
-        "deep-teal": "#075E5A", // primary actions, links
-        "bright-teal": "#18B8AC",
-        sidebar: {
-          DEFAULT: "#062F33", // sidebar gradient start
-          deep: "#041F25", // sidebar gradient end
-          active: "#0A6665", // active nav item
-        },
-        emerald: "#10B981", // success
-        pale: "#E7F7F4", // pale teal surface / icon chips
-        warn: "#F59E0B",
-        info: "#3B82F6",
-        grape: "#8B5CF6",
-        compare: "#B8CDD3", // comparison series
-        gridline: "#E7EDF2",
-        mist: "#F8FAFC", // soft panels (== secondary surface)
-        line: "#E6ECF1", // standard border
-        divider: "#EDF1F5",
+        teal: "#1BA39C", // interactive accents, focus, success borders
+        "deep-teal": "#08756F", // sidebar, primary actions, links
+        mist: "#EFF8F6", // panels, soft fills, hover states
+        line: "#DBDBDB", // borders / dividers (landing --line: hsl(0 0% 86%))
       },
       fontFamily: {
-        sans: [
-          "Inter",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Roboto",
-          "sans-serif",
-        ],
-        display: [
-          "Inter",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "sans-serif",
-        ],
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
+        sans: ["Nunito Sans", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        display: ["Barlow Condensed", "Arial Narrow", "sans-serif"],
+        mono: ["IBM Plex Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
-        card: "0 1px 2px rgba(16, 42, 67, 0.05), 0 4px 16px rgba(16, 42, 67, 0.05)",
-        lift: "0 4px 8px rgba(16, 42, 67, 0.06), 0 12px 28px rgba(16, 42, 67, 0.10)",
+        card: "0 10px 30px rgba(43, 43, 43, 0.08)",
+        lift: "0 18px 40px rgba(43, 43, 43, 0.14)",
       },
     },
   },

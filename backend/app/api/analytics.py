@@ -105,7 +105,15 @@ def analytics_compare(
 ) -> dict:
     _scope_hotel(db, hotel_id, current_user)
     a = _range(range_a, a_start, a_end)
-    b = _range(range_b, b_start, b_end)
+    if range_b == "previous_period":
+        # The equal-length period immediately before range A. Resolved
+        # here because it depends on A's bounds, unlike the named keys.
+        try:
+            b = analytics_service.previous_period_bounds(a)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        b = _range(range_b, b_start, b_end)
     return analytics_service.compare_periods(db, hotel_id, a, b, today=date.today())
 
 
@@ -135,6 +143,31 @@ def analytics_room_popularity(
     _scope_hotel(db, hotel_id, current_user)
     start_d, end_d = _range(range, start, end)
     return analytics_service.room_popularity(db, hotel_id, start_d, end_d, today=date.today())
+
+
+@router.get("/analytics/popularity-series")
+def analytics_popularity_series(
+    hotel_id: int,
+    range: str = Query("month"),  # noqa: A002
+    group_by: str = Query("day"),
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db, scope="function"),
+    current_user: HotelUser = Depends(_ANALYTICS_VIEW),
+) -> dict:
+    """Per-room-type bookings/revenue per time bucket (grouped bars).
+
+    Same accounting as /analytics/room-popularity (non-cancelled,
+    earned by check-in date); every room type appears in every bucket,
+    zero-filled where it had no stays.
+    """
+    _scope_hotel(db, hotel_id, current_user)
+    if group_by not in ("day", "week", "month", "year"):
+        raise HTTPException(status_code=422, detail="invalid group_by")
+    start_d, end_d = _range(range, start, end)
+    return analytics_service.popularity_series(
+        db, hotel_id, start_d, end_d, group_by=group_by, today=date.today()
+    )
 
 
 @router.get("/analytics/activity")

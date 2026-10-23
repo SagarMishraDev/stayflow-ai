@@ -9,7 +9,7 @@ import { EmptyState } from "./ChartCard";
 
 const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
   booking_created: {
-    chip: "bg-info/10 text-info",
+    chip: "bg-[#3B82F6]/10 text-[#3B82F6]",
     icon: (
       <>
         <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -22,7 +22,7 @@ const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
     ),
   },
   booking_confirmed: {
-    chip: "bg-emerald/10 text-emerald",
+    chip: "bg-[#10B981]/10 text-[#10B981]",
     icon: (
       <>
         <circle cx="12" cy="12" r="9" />
@@ -31,7 +31,7 @@ const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
     ),
   },
   booking_cancelled: {
-    chip: "bg-coral-soft text-coral-deep",
+    chip: "bg-[#FDECEC] text-[#C22F2F]",
     icon: (
       <>
         <circle cx="12" cy="12" r="9" />
@@ -41,7 +41,7 @@ const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
     ),
   },
   payment_received: {
-    chip: "bg-emerald/10 text-emerald",
+    chip: "bg-[#10B981]/10 text-[#10B981]",
     icon: (
       <>
         <rect x="2" y="6" width="20" height="12" rx="2" />
@@ -51,7 +51,7 @@ const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
     ),
   },
   payment_pending: {
-    chip: "bg-warn/10 text-[#B45309]",
+    chip: "bg-[#F59E0B]/10 text-[#B45309]",
     icon: (
       <>
         <circle cx="12" cy="12" r="9" />
@@ -60,7 +60,7 @@ const KIND_STYLE: Record<ActivityKind, { chip: string; icon: ReactNode }> = {
     ),
   },
   refund_processed: {
-    chip: "bg-grape/10 text-grape",
+    chip: "bg-[#8B5CF6]/10 text-[#8B5CF6]",
     icon: (
       <>
         <path d="M3 12a9 9 0 1 0 2.6-6.3" />
@@ -94,14 +94,14 @@ export function RecentActivity({
     return (
       <div aria-busy="true" aria-label="Loading activity" className="space-y-3">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-12 animate-pulse rounded-xl bg-mist" />
+          <div key={i} className="h-12 animate-pulse rounded-xl bg-[#F8FAFC]" />
         ))}
       </div>
     );
   }
   if (isError) {
     return (
-      <p className="py-6 text-center text-[13px] text-coral-deep">
+      <p className="py-6 text-center text-[13px] text-[#C22F2F]">
         Activity could not be loaded. Try refreshing the page.
       </p>
     );
@@ -110,7 +110,7 @@ export function RecentActivity({
     return <EmptyState message="No recent activity yet — new bookings and payments will appear here." />;
   }
   return (
-    <ul className="divide-y divide-divider">
+    <ul className="divide-y divide-[#EDF1F5]">
       {events.map((e, i) => {
         const style = KIND_STYLE[e.kind] ?? KIND_STYLE.booking_created;
         return (
@@ -133,15 +133,15 @@ export function RecentActivity({
               </svg>
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13.5px] font-semibold text-ink">
-                {e.title} <span className="font-medium text-ink-muted">{e.reference}</span>
+              <p className="truncate text-[13.5px] font-semibold text-[#102A43]">
+                {e.title} <span className="font-medium text-[#8293A5]">{e.reference}</span>
               </p>
-              <p className="truncate text-xs text-ink-muted">
+              <p className="truncate text-xs text-[#8293A5]">
                 {e.summary ? `${e.summary} · ` : ""}
                 {when(e.timestamp)}
               </p>
             </div>
-            <span className="shrink-0 text-[13.5px] font-semibold tabular-nums text-ink">
+            <span className="shrink-0 text-[13.5px] font-semibold tabular-nums text-[#102A43]">
               {inr(e.amount)}
             </span>
           </li>

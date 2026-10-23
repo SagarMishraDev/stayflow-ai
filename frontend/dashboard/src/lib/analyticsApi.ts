@@ -102,6 +102,8 @@ export interface ActivityEvent {
 export const RANGE_OPTIONS: { key: string; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "yesterday", label: "Yesterday" },
+  { key: "last_7_days", label: "Last 7 days" },
+  { key: "last_30_days", label: "Last 30 days" },
   { key: "week", label: "This week" },
   { key: "last_week", label: "Last week" },
   { key: "month", label: "This month" },
@@ -112,6 +114,19 @@ export const RANGE_OPTIONS: { key: string; label: string }[] = [
   { key: "last_year", label: "Last year" },
   { key: "all", label: "All time" },
   { key: "custom", label: "Custom range" },
+];
+
+/** Comparison-period options for the compare endpoint. Range keys
+ * resolve independently; "previous_period" is resolved BY THE BACKEND
+ * from range A (the equal-length window immediately before it);
+ * "none" disables comparison client-side. */
+export const COMPARE_OPTIONS: { key: string; label: string }[] = [
+  { key: "previous_period", label: "Previous period" },
+  ...RANGE_OPTIONS.filter((o) => o.key !== "custom").map((o) => ({
+    key: o.key,
+    label: o.label,
+  })),
+  { key: "none", label: "No comparison" },
 ];
 
 export interface RangeParams {
@@ -177,6 +192,35 @@ export async function fetchPopularity(hotelId: number, r: RangeParams): Promise<
     params: params(hotelId, r),
   });
   return data as Popularity;
+}
+
+export interface PopularityBucketCell {
+  room_type: string;
+  bookings: number;
+  revenue: string;
+}
+
+export interface PopularityBucket {
+  period: string;
+  rooms: PopularityBucketCell[];
+}
+
+export interface PopularitySeries {
+  group_by: string;
+  period_days: number;
+  buckets: PopularityBucket[];
+  room_types: PopularityRow[];
+}
+
+export async function fetchPopularitySeries(
+  hotelId: number,
+  r: RangeParams,
+  groupBy: string,
+): Promise<PopularitySeries> {
+  const { data } = await api.get("/analytics/popularity-series", {
+    params: { ...params(hotelId, r), group_by: groupBy },
+  });
+  return data as PopularitySeries;
 }
 
 export async function fetchActivity(

@@ -34,7 +34,7 @@ export default function Login() {
         <div className="flex items-center gap-3 bg-deep-teal px-8 py-6">
           <span
             aria-hidden
-            className="grid h-12 w-12 place-items-center rounded-xl bg-teal text-3xl font-bold text-white ring-2 ring-inset ring-white/25"
+            className="grid h-12 w-12 place-items-center rounded-xl bg-sun font-display text-3xl font-bold text-ink ring-2 ring-inset ring-ink"
           >
             S
           </span>

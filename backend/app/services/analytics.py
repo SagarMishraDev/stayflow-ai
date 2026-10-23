@@ -43,6 +43,8 @@ def _money(value: Decimal) -> str:
 RANGE_KEYS = (
     "today",
     "yesterday",
+    "last_7_days",
+    "last_30_days",
     "week",
     "last_week",
     "month",
@@ -84,6 +86,12 @@ def resolve_range(
         return today, today + timedelta(days=1)
     if range_key == "yesterday":
         return today - timedelta(days=1), today
+    if range_key == "last_7_days":
+        # Rolling window: today and the six days before it (7 days total).
+        return today - timedelta(days=6), today + timedelta(days=1)
+    if range_key == "last_30_days":
+        # Rolling window: today and the 29 days before it (30 days total).
+        return today - timedelta(days=29), today + timedelta(days=1)
     if range_key in ("week", "last_week"):
         monday = today - timedelta(days=today.weekday())
         if range_key == "last_week":
@@ -115,6 +123,23 @@ def resolve_range(
             raise ValueError("custom range end must not be before start")
         return custom_start, custom_end + timedelta(days=1)
     raise ValueError(f"unknown range: {range_key}")
+
+
+def previous_period_bounds(
+    bounds: tuple[date | None, date | None],
+) -> tuple[date, date]:
+    """The equal-length period immediately before ``bounds``.
+
+    Used by the compare endpoint for the ``previous_period`` comparison:
+    for a selected range of N days, the comparison is the N days that
+    end exactly where the selected range starts. Open-ended ranges
+    (``all``) have no previous period and raise ``ValueError``.
+    """
+    start, end = bounds
+    if start is None or end is None:
+        raise ValueError("previous_period is not available for open-ended ranges")
+    length = end - start
+    return start - length, start
 
 
 def _days(start: date | None, end: date | None) -> int:
@@ -471,6 +496,136 @@ def room_popularity(
     return {"rooms": rows, "most_booked": most, "least_booked": least}
 
 
+def _bucket_starts(start: date, end: date, group_by: str) -> list[date]:
+    """First day of every bucket intersecting [start, end)."""
+    starts: list[date] = []
+    if group_by == "day":
+        current = start
+        while current < end:
+            starts.append(current)
+            current += timedelta(days=1)
+    elif group_by == "week":
+        current = start - timedelta(days=start.weekday())  # Monday of start's week
+        while current < end:
+            starts.append(current)
+            current += timedelta(days=7)
+    elif group_by == "month":
+        current = start.replace(day=1)
+        while current < end:
+            starts.append(current)
+            month = current.month + 1
+            current = date(current.year + (month - 1) // 12, ((month - 1) % 12) + 1, 1)
+    elif group_by == "year":
+        current = date(start.year, 1, 1)
+        while current < end:
+            starts.append(current)
+            current = date(current.year + 1, 1, 1)
+    else:
+        raise ValueError(f"unsupported group_by: {group_by}")
+    return starts
+
+
+def popularity_series(
+    db: Session,
+    hotel_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    group_by: str = "day",
+    today: date,
+) -> dict:
+    """Per-room-type bookings/revenue bucketed over time.
+
+    Powers the grouped bar chart on the Analytics page. Accounting
+    follows the same conventions as :func:`room_popularity` and
+    :func:`revenue_series`: only non-CANCELLED bookings, attributed by
+    CHECK-IN date ("earned"). Every room type of the hotel appears in
+    every bucket — with zeroes where it had no stays — so zero-booking
+    types stay visible. The range-level ``room_types`` rows carry the
+    totals plus the occupancy figures (occupied room-nights by overlap,
+    available = total_rooms × period days for active types), computed
+    exactly as in :func:`room_popularity`.
+    """
+    if group_by not in ("day", "week", "month", "year"):
+        raise ValueError(f"unsupported group_by: {group_by}")
+    days = _days(start, end)
+    bookings = _bookings(db, hotel_id)
+    rooms = list(db.scalars(select(Room).where(Room.hotel_id == hotel_id)).all())
+    stays = _stay_bookings(bookings, start, end)
+
+    # Bucket window: for open-ended ranges ("all") fall back to the
+    # span of the hotel's stay bookings themselves.
+    if start is None or end is None:
+        if stays:
+            eff_start = start if start is not None else min(b.check_in for b in stays)
+            eff_end = end if end is not None else max(b.check_in for b in stays) + timedelta(days=1)
+        else:
+            eff_start = eff_end = today
+    else:
+        eff_start, eff_end = start, end
+    starts = _bucket_starts(eff_start, eff_end, group_by) if eff_end > eff_start else []
+    # Safety cap: a day-grouped multi-decade range must not produce an
+    # unbounded payload (366 buckets ≈ one leap year of days).
+    starts = starts[:366]
+
+    per_bucket: dict[str, dict[int, dict]] = {
+        _bucket_key(s, group_by): {
+            r.id: {"bookings": 0, "revenue": ZERO} for r in rooms
+        }
+        for s in starts
+    }
+    for b in stays:
+        key = _bucket_key(b.check_in, group_by)
+        cell = per_bucket.get(key, {}).get(b.room_id)
+        if cell is not None:
+            cell["bookings"] += 1
+            cell["revenue"] += b.final_price
+
+    room_type_rows: list[dict] = []
+    for room in rooms:
+        room_bookings = [b for b in bookings if b.room_id == room.id]
+        occupied = _occupied_room_nights(room_bookings, start, end)
+        available = room.total_rooms * days if room.is_active else 0
+        totals = {"bookings": 0, "revenue": ZERO}
+        for bucket_cells in per_bucket.values():
+            cell = bucket_cells[room.id]
+            totals["bookings"] += cell["bookings"]
+            totals["revenue"] += cell["revenue"]
+        room_type_rows.append(
+            {
+                "room_id": room.id,
+                "room_type": room.room_type,
+                "is_active": room.is_active,
+                "total_rooms": room.total_rooms,
+                "bookings": totals["bookings"],
+                "revenue": _money(totals["revenue"]),
+                "occupied_room_nights": occupied,
+                "available_room_nights": available,
+                "occupancy_rate": round(occupied / available * 100, 2) if available else 0.0,
+            }
+        )
+
+    return {
+        "group_by": group_by,
+        "period_days": days,
+        "buckets": [
+            {
+                "period": key,
+                "rooms": [
+                    {
+                        "room_type": room.room_type,
+                        "bookings": per_bucket[key][room.id]["bookings"],
+                        "revenue": _money(per_bucket[key][room.id]["revenue"]),
+                    }
+                    for room in rooms
+                ],
+            }
+            for key in (_bucket_key(s, group_by) for s in starts)
+        ],
+        "room_types": room_type_rows,
+    }
+
+
 # Payment lifecycle -> activity feed wording. Statuses not listed here
 # (e.g. "failed") are deliberately not surfaced as activity.
 _PAYMENT_ACTIVITY = {
@@ -572,7 +727,9 @@ def recent_activity(db: Session, hotel_id: int, *, limit: int = 10) -> list[dict
                 "kind": kind,
                 "title": title,
                 "reference": f"#{payment.booking_id}",
-                "summary": f"{payment.method.replace('_', ' ').title()} · Booking #{payment.booking_id}",
+                "summary": (
+                    f"{payment.method.replace('_', ' ').title()} · Booking #{payment.booking_id}"
+                ),
                 "amount": _money(payment.amount),
                 "timestamp": payment.created_at,
             }

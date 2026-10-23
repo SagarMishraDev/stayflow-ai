@@ -1,0 +1,153 @@
+/* Analytics-only design system ("View 2" BI palette).
+ *
+ * Imported ONLY by src/pages/Analytics.tsx and scoped under
+ * .analytics-root: the rest of the dashboard keeps the global
+ * StayFlow theme (Barlow Condensed / Nunito Sans, paper/ink/sun/
+ * coral/teal tokens in tailwind.config.js). Nothing in this file may
+ * use unscoped selectors — every rule lives under .analytics-root so
+ * the palette can never leak into Login, Home, or other modules.
+ */
+
+.analytics-root {
+  --ax-bg: #f4f7fa;
+  --ax-card: #ffffff;
+  --ax-surface: #f8fafc;
+  --ax-border: #e3eaf0;
+  --ax-grid: #e7edf2;
+  --ax-divider: #edf1f5;
+  --ax-ink: #102a43;
+  --ax-ink-soft: #52677d;
+  --ax-ink-muted: #8293a5;
+  --ax-teal: #0f9d94;
+  --ax-dark-teal: #087e78;
+  --ax-deep-teal: #075e5a;
+  --ax-bright-teal: #18b8ac;
+  --ax-emerald: #10b981;
+  --ax-blue: #3b82f6;
+  --ax-purple: #8b5cf6;
+  --ax-amber: #f59e0b;
+  --ax-danger: #ef4444;
+  --ax-danger-deep: #c22f2f;
+  --ax-danger-soft: #fdecec;
+  --ax-pale: #e7f7f4;
+  --ax-compare: #b8cdd3;
+  --ax-shadow: 0 1px 2px rgba(16, 42, 67, 0.05), 0 4px 16px rgba(16, 42, 67, 0.05);
+
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  background: var(--ax-bg);
+  color: var(--ax-ink);
+  border-radius: 20px;
+  padding: 20px;
+}
+
+/* The global base layer styles headings in Barlow Condensed uppercase;
+ * inside Analytics, headings are Inter, sentence case. */
+.analytics-root h1,
+.analytics-root h2,
+.analytics-root h3 {
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  text-transform: none;
+  letter-spacing: -0.01em;
+}
+
+.analytics-root .ax-card {
+  background: var(--ax-card);
+  border: 1px solid var(--ax-border);
+  border-radius: 16px;
+  box-shadow: var(--ax-shadow);
+}
+
+.analytics-root .ax-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--ax-border);
+  background: var(--ax-card);
+  color: var(--ax-ink);
+  padding: 0.5rem 0.9rem;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.analytics-root .ax-btn:hover:not(:disabled) {
+  background: var(--ax-surface);
+}
+.analytics-root .ax-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.analytics-root .ax-select {
+  border-radius: 10px;
+  border: 1px solid var(--ax-border);
+  background: var(--ax-card);
+  padding: 0.5rem 0.75rem;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ax-ink);
+}
+.analytics-root .ax-select:focus {
+  border-color: var(--ax-teal);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(15, 157, 148, 0.3);
+}
+
+.analytics-root .ax-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ax-ink-muted);
+}
+
+/* Room performance table (scoped replacement for the global .table). */
+.analytics-root .ax-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+.analytics-root .ax-table th {
+  background: var(--ax-surface);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ax-ink-soft);
+  border-bottom: 1px solid var(--ax-border);
+  padding: 0.625rem 0.75rem;
+  white-space: nowrap;
+}
+.analytics-root .ax-table td {
+  border-bottom: 1px solid var(--ax-divider);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+}
+.analytics-root .ax-table tbody tr:hover {
+  background: var(--ax-surface);
+}
+
+@media (max-width: 767px) {
+  .analytics-root {
+    padding: 12px;
+    border-radius: 14px;
+  }
+}

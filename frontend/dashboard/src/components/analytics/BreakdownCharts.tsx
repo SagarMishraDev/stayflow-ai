@@ -52,10 +52,10 @@ export function DonutChart({
             <title>{`${s.label}: ${inr(s.value)} (${Math.round(s.frac * 100)}%)`}</title>
           </circle>
         ))}
-        <text x="70" y="66" textAnchor="middle" className="fill-ink text-[15px] font-bold tabular-nums">
+        <text x="70" y="66" textAnchor="middle" className="fill-[#102A43] text-[15px] font-bold tabular-nums">
           {inrShort(total)}
         </text>
-        <text x="70" y="82" textAnchor="middle" className="fill-ink-muted text-[9.5px]">
+        <text x="70" y="82" textAnchor="middle" className="fill-[#8293A5] text-[9.5px]">
           {centerLabel}
         </text>
       </svg>
@@ -64,9 +64,9 @@ export function DonutChart({
           <li key={r.label} className="flex items-baseline justify-between gap-3 text-[13px]">
             <span className="inline-flex min-w-0 items-center gap-2">
               <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: r.color }} />
-              <span className="truncate font-medium text-ink">{r.label}</span>
+              <span className="truncate font-medium text-[#102A43]">{r.label}</span>
             </span>
-            <span className="shrink-0 tabular-nums text-ink-soft">
+            <span className="shrink-0 tabular-nums text-[#52677D]">
               {inr(r.value)} · {total > 0 ? Math.round((r.value / total) * 100) : 0}%
             </span>
           </li>
@@ -95,7 +95,7 @@ export function VerticalBars({ rows, ariaLabel }: { rows: ChartRow[]; ariaLabel:
         return (
           <g key={i}>
             <line x1={PAD.l} x2={W - PAD.r} y1={y} y2={y} stroke="#E7EDF2" strokeWidth={1} />
-            <text x={PAD.l - 8} y={y + 4} textAnchor="end" className="fill-ink-muted text-[11px] tabular-nums">
+            <text x={PAD.l - 8} y={y + 4} textAnchor="end" className="fill-[#8293A5] text-[11px] tabular-nums">
               {inrShort(t)}
             </text>
           </g>
@@ -116,10 +116,10 @@ export function VerticalBars({ rows, ariaLabel }: { rows: ChartRow[]; ariaLabel:
             >
               <title>{`${r.label}: ${inr(r.value)}${r.bookings !== undefined ? ` · ${r.bookings} bookings` : ""}`}</title>
             </rect>
-            <text x={cx} y={PAD.t + innerH - h - 6} textAnchor="middle" className="fill-ink text-[11px] font-semibold tabular-nums">
+            <text x={cx} y={PAD.t + innerH - h - 6} textAnchor="middle" className="fill-[#102A43] text-[11px] font-semibold tabular-nums">
               {inrShort(r.value)}
             </text>
-            <text x={cx} y={H - 8} textAnchor="middle" className="fill-ink-muted text-[11px]">
+            <text x={cx} y={H - 8} textAnchor="middle" className="fill-[#8293A5] text-[11px]">
               {r.label.length > 14 ? r.label.slice(0, 13) + "…" : r.label}
             </text>
           </g>
@@ -138,14 +138,14 @@ export function HorizontalBars({ rows }: { rows: ChartRow[] }) {
       {rows.map((r) => (
         <li key={r.label}>
           <div className="flex items-baseline justify-between gap-3 text-[13px]">
-            <span className="font-medium text-ink">{r.label}</span>
-            <span className="tabular-nums text-ink-soft">
+            <span className="font-medium text-[#102A43]">{r.label}</span>
+            <span className="tabular-nums text-[#52677D]">
               {inr(r.value)}
               {total > 0 ? ` · ${Math.round((r.value / total) * 100)}%` : ""}
               {r.bookings !== undefined ? ` · ${r.bookings} bookings` : ""}
             </span>
           </div>
-          <div className="mt-1.5 h-2.5 rounded-full bg-mist">
+          <div className="mt-1.5 h-2.5 rounded-full bg-[#F8FAFC]">
             <div
               className="h-2.5 rounded-full"
               style={{ width: `${(r.value / max) * 100}%`, background: r.color }}
